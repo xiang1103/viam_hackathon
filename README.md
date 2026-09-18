@@ -5,34 +5,32 @@ sorted piles. One pick-and-place loop; only the **classifier** changes per stage
 
 | Stage | Sort by | Classifier | Status |
 |---|---|---|---|
-| 1 | color | one Viam color-detector vision service per color | built, tested offline |
+| 1 | color | OpenCV: objects from the depth image, color by HSV | built, tested offline |
 | 2 | shape | contours + height profile | next |
 | 3 | material | Claude vision → bootstraps a Viam-trained TFLite model | planned |
 | 4 | brand (soda vs water) | Claude vision close-up before the pick | stretch |
 
 ```
-survey pose → RGB-D snapshot → Viam vision finds the objects (inside the unsorted zone) → choose topmost
+survey pose → RGB-D snapshot → find the objects (inside the unsorted zone) → choose topmost
   → classify → pick → set down in that class's pile (created on demand) → re-survey
 ```
 
-## Perception: Viam vision
+## Perception: two options (`perception:` in [config/machine.yaml](config/machine.yaml))
 
-Objects are found by Viam vision services (`get_object_point_clouds`), the same way `move_arm.py` does it.
-A color detector + segmenter only reports its **one** target color, so:
+**`depth` (default, used for color).** OpenCV on the depth image: anything standing above the table
+inside the unsorted zone is an object; its color is read afterwards with HSV. It is class-agnostic, which
+is what "assess the zone, then create piles to fit" needs: whatever colors turn up get piles, including
+black / white / grey, with nothing to configure per color (hues live in [config/sort.yaml](config/sort.yaml)).
+Needs the RealSense color and depth streams **aligned** (same resolution; `align_color_depth: true`) — step 1 checks it.
 
-> **one vision service per class**, and an item's class is simply which service saw it.
+**`viam`.** Viam vision services (`get_object_point_clouds`), as `move_arm.py` does. A color detector +
+segmenter only reports its **one** target color, so it needs one service per class (`vision.segmenters`:
+label → service) and never sees a color that has no service. It earns its place in the later stages:
+with a trained ML detector that names what it finds, set `use_detection_label: true`.
 
-To sort a new color: in the Viam app add a `color_detector` vision service for it plus a
-`detections-to-segments` service pointing at that detector, then list it in
-[config/machine.yaml](config/machine.yaml) under `vision.segmenters` (`blue: blue-segmenter`). The key is the
-pile's name. For an ML detector that names what it finds, set `use_detection_label: true` instead.
-
-Only the raw points are taken from the service. Size, **top height** and grasp angle are computed from
-them — not from the box center, which sits too low on tall items (why `move_arm.py` hard-codes
-`OBJECT_HEIGHT_MM`). Items seen by two services are kept once; a failing service is skipped.
-
-`perception: depth` in `machine.yaml` switches to an OpenCV fallback (anything standing above the table,
-colored by HSV) that needs no vision service.
+Both paths build objects through the same code, so size, **top height** and grasp angle are computed from
+the object's points — not from a box center, which sits too low on tall items (why `move_arm.py`
+hard-codes `OBJECT_HEIGHT_MM`).
 
 ## Zones and piles
 
@@ -75,7 +73,7 @@ cp .env.example .env    # fill in from the Viam app: machine → CONNECT → API
 | # | Command | Moves arm? | What you learn / must pass |
 |---|---|---|---|
 | 0 | `python -m recycle_sorter.cli --action static-cycle --step` | **yes**, Enter per move | Blind pick→place between `move_arm.py`'s two fixed poses, but through this package. Proves our motion layer matches theirs before any vision. |
-| 1 | `python scripts/00_discover.py` | no | Resource names, frame tree, camera streams, and what each vision service in `machine.yaml` sees right now. Put a block out first: its box center and point-cloud centroid should roughly agree. |
+| 1 | `python scripts/00_discover.py` | no | Resource names, frame tree, camera streams, and what each vision service in `machine.yaml` sees. **Color and depth streams must be the same resolution** — if not, set `align_color_depth: true` on the RealSense, or colors get read from the wrong pixels. |
 | 2 | *(optional)* Jog in the Viam app, then `python scripts/01_teach_pose.py survey` / `home` | no | `survey` ships as `move_arm.py`'s proven `WATCH_POSE`, so only re-teach it if the magenta unsorted zone isn't fully in view. |
 | 3 | Clear the table, go to survey, `python scripts/03_record_frames.py --table` | no | Prints the measured `table_top` (expected ≈ 0) → put it in `config/workspace.yaml`. |
 | 4 | One block on the table: `python scripts/02_hover_test.py` | **yes**, Enter per move | **Gate: gripper hovers within 15 mm of the block in x/y, and fingertips sit `--hover` (60) mm above its top.** A height error goes into `gripper.tcp_offset`; finger rotation into `yaw_offset_deg`. If it fails, fix the camera frame / `move_frame` before anything else. |
@@ -88,8 +86,7 @@ which recycling items are feasible later (a full-size can is ~66 mm).
 
 ## Adding a classifier (where the color gate plugs in)
 
-For color, no classifier is needed: the class comes from the vision service. For later stages the
-loop still never changes; a stage is a class with one method. The objects are already found, so a
+The loop never changes between stages; a stage is a class with one method. The objects are already found, so a
 classifier only answers "what is this one?":
 
 ```python
@@ -104,7 +101,7 @@ class MyColorClassifier:
 2. Add the mode under `modes:` in [config/sort.yaml](config/sort.yaml). That's all — piles are created from whatever labels you return.
 3. Test it offline: `python -m recycle_sorter.cli --mode <mode> --replay data/frames`.
 
-`classify/color_hsv.py` is only the fallback for objects that did not come from a vision service.
+`classify/color_hsv.py` is the color stage. `vision_label.py` takes the class from a Viam vision service instead, when `perception: viam`.
 
 ## Working without the robot
 

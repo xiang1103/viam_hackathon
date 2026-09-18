@@ -44,7 +44,7 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 
 - `move_arm.py` is the hardware-proven reference. When a number here disagrees with it, `move_arm.py` wins.
   - Derived from it: `table_top: 0`, `gripper.tcp_offset: 70`, `bounds.frame_z_min: 60`, `pick.approach: 150`, `pick.grasp_speed: 8`, the `survey` pose (= `WATCH_POSE`), camera `cam`.
-- Objects are found with Viam vision services (`machine.yaml` → `vision.segmenters`: class label → service). One color-detector service per color; the class is which service saw the item.
+- Perception is switchable (`machine.yaml` → `perception`). `depth` (default, for color): OpenCV finds anything above the table, HSV names its color. `viam`: Viam vision services, one per class (`vision.segmenters`), intended for later trained detectors.
 - z values in the package mean **fingertip** height. `Manipulator.move_to` adds `tcp_offset` to get the gripper-frame pose for `motion.move`.
 - Safe to run (no motion): `.venv/bin/python -m pytest -q`, and `python -m recycle_sorter.cli --replay <frames dir>`.
 - These **move the arm**: `python -m recycle_sorter.cli` (without `--dry-run` / `--replay`), `scripts/02_hover_test.py`. Use `--step` on first runs.
