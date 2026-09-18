@@ -27,7 +27,7 @@ Develop as a remote Python script from the laptop (API key + machine address) fo
 ### Environment
 - `python3.12 -m venv .venv` (viam-sdk 0.80.0 installs on 3.14, but 3.12 is the safer, tested target)
 - Deps: `viam-sdk`, `numpy`, `opencv-python`, `pillow`, `pyyaml`, `python-dotenv`, `pydantic`, `anthropic`, `pytest`, `pytest-asyncio`
-- Secrets in `.env` (gitignored): `VIAM_API_KEY`, `VIAM_API_KEY_ID`, `VIAM_ADDRESS`, `ANTHROPIC_API_KEY`
+- Secrets in `.env` (gitignored): `API_KEY`, `API_KEY_ID`, `ROBOT_ADDRESS`, `ANTHROPIC_API_KEY`
 - Note: viam-sdk hard-pins `protobuf==6.33.5` — watch for conflicts when adding packages.
 
 ### Repo layout

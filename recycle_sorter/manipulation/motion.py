@@ -47,18 +47,28 @@ class Manipulator:
             await asyncio.to_thread(input, f"  ENTER to: {what} (Ctrl-C aborts) ")
 
     async def move_to(self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False) -> None:
-        """Move the gripper to a top-down pose (pointing straight at the table) in the world frame."""
+        """Put the FINGERTIPS at (x, y, z) in the world frame, gripper pointing straight down.
+
+        Bounds are checked on the fingertip position; the pose sent to the planner
+        is the gripper frame origin, tcp_offset above it.
+        """
         check_target(x, y, z, self.workspace)
         await self._confirm(f"move {'linear ' if linear else ''}to x={x:.0f} y={y:.0f} z={z:.0f} theta={theta:.0f}")
         if self.dry_run:
             return
-        constraints = None
+        frame_z = z + self.workspace["gripper"]["tcp_offset"]
+        dest = PoseInFrame(reference_frame="world", pose=Pose(x=x, y=y, z=frame_z, o_x=0, o_y=0, o_z=-1, theta=theta))
         if linear:
             tol = self.workspace["pick"]["line_tolerance_mm"]
             constraints = Constraints(linear_constraint=[LinearConstraint(line_tolerance_mm=tol)])
-        dest = PoseInFrame(reference_frame="world", pose=Pose(x=x, y=y, z=z, o_x=0, o_y=0, o_z=-1, theta=theta))
-        ok = await self.motion.move(self.move_frame, dest, constraints=constraints, timeout=self.timeout)
-        if not ok:
+            try:
+                if await self.motion.move(self.move_frame, dest, constraints=constraints, timeout=self.timeout):
+                    return
+            except Exception as e:
+                # A failed plan has not moved the arm, so an unconstrained retry
+                # is safe. Free plans are what move_arm.py proved on hardware.
+                log.warning("linear plan failed (%s); retrying unconstrained", e)
+        if not await self.motion.move(self.move_frame, dest, timeout=self.timeout):
             raise RuntimeError("motion.move returned False")
 
     async def goto_named(self, name: str) -> None:

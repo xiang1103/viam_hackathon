@@ -1,0 +1,10 @@
+# Fixed poses for the blind static pick/place cycle (no camera). Values proven on
+# the arm in the original move_arm.py. frame_z is the GRIPPER FRAME origin height,
+# exactly as sent to motion.move - not fingertip height.
+static:
+  pick: {x: 300, y: -150, frame_z: 75, theta: 0}
+  place: {x: 300, y: 150, frame_z: 75, theta: 0}
+
+# Filled in by scripts/01_teach_pose.py:
+#   joints: {home: [...], survey: [...]}
+#   bins:   {bin_a: {x: ..., y: ...}, ...}

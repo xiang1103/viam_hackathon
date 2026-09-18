@@ -27,9 +27,9 @@ def viam_credentials() -> tuple[str, str, str]:
     load_dotenv(ROOT / ".env")
     try:
         return (
-            os.environ["VIAM_ADDRESS"],
-            os.environ["VIAM_API_KEY_ID"],
-            os.environ["VIAM_API_KEY"],
+            os.environ["ROBOT_ADDRESS"],
+            os.environ["API_KEY_ID"],
+            os.environ["API_KEY"],
         )
     except KeyError as e:
         raise SystemExit(f"Missing {e.args[0]} - copy .env.example to .env and fill it in.") from e

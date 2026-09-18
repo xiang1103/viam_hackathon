@@ -8,6 +8,37 @@ from .motion import Manipulator
 log = logging.getLogger(__name__)
 
 
+async def pick_at(m: Manipulator, x: float, y: float, z: float, theta: float = 0.0) -> bool:
+    """Open, approach from above, descend, grasp, raise clear. z is fingertip height.
+
+    Returns grab()'s verdict on whether something is held.
+    """
+    p = m.workspace["pick"]
+    await m.open()
+    try:
+        await m.move_to(x, y, z + p["approach"], theta)
+    except Exception as e:
+        # A 180 degree flip is the same grasp for a parallel gripper, but can be
+        # reachable when the first wrist angle is not.
+        log.warning("approach failed (%s); retrying with theta+180", e)
+        theta += 180.0
+        await m.move_to(x, y, z + p["approach"], theta)
+    await m.move_to(x, y, z, theta, linear=True)
+    held = await m.grab()
+    # Raise before any lateral move so the object does not drag across the table.
+    await m.move_to(x, y, z + p["lift"], theta, linear=True)
+    return held
+
+
+async def place_at(m: Manipulator, x: float, y: float, z: float, theta: float = 0.0) -> None:
+    """Arrive at carry height, descend, release, lift clear. z is fingertip height."""
+    p = m.workspace["pick"]
+    await m.move_to(x, y, z + p["lift"], theta)
+    await m.move_to(x, y, z, theta, linear=True)
+    await m.open()
+    await m.move_to(x, y, z + p["lift"], theta, linear=True)
+
+
 def grasp_pose(obs: ObjectObservation, workspace: dict) -> tuple[float, float, float, float]:
     """Top-down grasp: (x, y, z, theta). Fingers close across the object's short axis."""
     g = workspace["gripper"]
@@ -16,35 +47,25 @@ def grasp_pose(obs: ObjectObservation, workspace: dict) -> tuple[float, float, f
 
 
 async def pick(m: Manipulator, obs: ObjectObservation) -> bool:
-    """Returns True if the gripper reports holding something after the lift."""
-    p = m.workspace["pick"]
-    x, y, z, theta = grasp_pose(obs, m.workspace)
-    above = obs.top_z + p["pregrasp_above"]
-
-    await m.open()
-    try:
-        await m.move_to(x, y, above, theta)
-    except Exception as e:
-        # A 180 degree flip is the same grasp for a parallel gripper, but can be
-        # reachable when the first wrist angle is not.
-        log.warning("pre-grasp failed (%s); retrying with theta+180", e)
-        theta += 180.0
-        await m.move_to(x, y, above, theta)
-    await m.move_to(x, y, z, theta, linear=True)
-    held = await m.grab()
-    await m.move_to(x, y, obs.top_z + p["lift"], theta, linear=True)
-    return held
+    return await pick_at(m, *grasp_pose(obs, m.workspace))
 
 
 async def place(m: Manipulator, bin_name: str) -> None:
     bins = m.poses.get("bins", {})
     if bin_name not in bins:
         raise KeyError(f"bin {bin_name!r} not taught yet - run scripts/01_teach_pose.py --bin {bin_name}")
-    p = m.workspace["pick"]
-    x, y = bins[bin_name]["x"], bins[bin_name]["y"]
-    release_z = m.workspace["table_top"] + p["place_above"]
+    release_z = m.workspace["table_top"] + m.workspace["pick"]["place_above"]
+    await place_at(m, bins[bin_name]["x"], bins[bin_name]["y"], release_z)
 
-    await m.move_to(x, y, release_z + p["lift"])
-    await m.move_to(x, y, release_z, linear=True)
-    await m.open()
-    await m.move_to(x, y, release_z + p["lift"], linear=True)
+
+async def static_cycle(m: Manipulator) -> bool:
+    """Blind pick -> place between the two fixed poses in poses.yaml. No camera involved."""
+    s = m.poses["static"]
+    offset = m.workspace["gripper"]["tcp_offset"]
+    # Static poses are stored as gripper-frame z (as proven in the original
+    # move_arm.py), so the pose commanded is identical whatever tcp_offset is.
+    pick_pose, place_pose = s["pick"], s["place"]
+    if not await pick_at(m, pick_pose["x"], pick_pose["y"], pick_pose["frame_z"] - offset, pick_pose["theta"]):
+        return False
+    await place_at(m, place_pose["x"], place_pose["y"], place_pose["frame_z"] - offset, place_pose["theta"])
+    return True

@@ -10,6 +10,8 @@ gripper above it, fingers aligned to close across the block's short side. Measur
   * xy offset between gripper center and block center:  <= 15 mm passes.
     Bigger: the camera frame in the machine config is off, or `move_frame` in
     machine.yaml is wrong (try "arm" vs "gripper").
+  * height: the fingertips should be --hover (60) mm above the block's top. If they
+    are N mm too high, lower workspace.yaml -> gripper.tcp_offset by N (too low: raise it).
   * finger alignment: if the fingers are rotated relative to the block's short
     axis, put that angle in workspace.yaml -> gripper.yaw_offset_deg.
 """

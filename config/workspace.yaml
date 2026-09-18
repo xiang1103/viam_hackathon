@@ -25,12 +25,19 @@ segmentation:
   top_band: 10         # mm below the object's top used for centroid / footprint
 
 gripper:
+  # Distance from the gripper FRAME ORIGIN (what motion.move positions) down to the
+  # fingertips. All z values in this repo mean fingertip height; this converts.
+  # 170 is inferred, not measured: move_arm.py's proven pick pose is z=75 with the
+  # table near -123, which only works if the origin sits ~170 mm above the tips.
+  # Erring high is the safe side (too high = grabs air, too low = hits the table).
+  # Measure it with scripts/02_hover_test.py.
+  tcp_offset: 170
   max_open: 80         # mm - measure on day 1; objects wider than this are skipped
   finger_depth: 25     # how far below the object's top the fingertips go
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
 
 pick:
-  pregrasp_above: 100
-  lift: 150
-  place_above: 120     # release height above table at the bin
-  line_tolerance_mm: 2
+  approach: 100        # standoff above the grasp / release height before descending
+  lift: 150            # carry height above the grasp / release height
+  place_above: 40      # fingertip release height above the table at a bin
+  line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan

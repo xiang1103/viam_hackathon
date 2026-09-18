@@ -65,3 +65,91 @@ def test_frame_round_trips_through_recorder(tmp_path, workspace):
     loaded = load_frame(save_frame(frame, tmp_path))
     assert (loaded.depth == frame.depth).all() and (loaded.color == frame.color).all()
     assert len(segment(loaded, workspace)) == len(segment(frame, workspace))
+
+
+# --- parity with the original move_arm.py ------------------------------------
+
+class FakeMotion:
+    def __init__(self, fail_linear=False):
+        self.calls, self.fail_linear = [], fail_linear
+
+    async def move(self, component_name, destination, constraints=None, timeout=None):
+        if constraints is not None and self.fail_linear:
+            raise RuntimeError("no path")
+        p = destination.pose
+        self.calls.append((component_name, destination.reference_frame, p.x, p.y, p.z, p.o_z, p.theta))
+        return True
+
+
+class FakeGripper:
+    def __init__(self, holds=True):
+        self.events, self.holds = [], holds
+
+    async def open(self, timeout=None):
+        self.events.append("open")
+
+    async def grab(self, timeout=None):
+        self.events.append("grab")
+        return self.holds
+
+
+def live_manipulator(workspace, motion, gripper):
+    cfg = {"move_frame": "gripper", "rpc_timeout_s": 5}
+    return Manipulator(None, gripper, motion, cfg, workspace, load_yaml("poses.yaml"))
+
+
+# What the original hard-coded run_static_cycle sent to motion.move, minus its one
+# redundant repeat of the place-lift pose: PICK/PLACE at z=75, approach +100, lift +150.
+ORIGINAL_STATIC_CYCLE = [
+    (300, -150, 175), (300, -150, 75), (300, -150, 225),
+    (300, 150, 225), (300, 150, 75), (300, 150, 225),
+]
+
+
+@pytest.mark.parametrize("tcp_offset", [0, 170])
+async def test_static_cycle_commands_the_original_poses(workspace, tcp_offset):
+    from recycle_sorter.manipulation.pickplace import static_cycle
+
+    workspace["gripper"]["tcp_offset"] = tcp_offset
+    workspace["bounds"]["z_max"] = 600
+    motion, gripper = FakeMotion(), FakeGripper()
+    assert await static_cycle(live_manipulator(workspace, motion, gripper))
+    assert [(x, y, z) for _, _, x, y, z, _, _ in motion.calls] == ORIGINAL_STATIC_CYCLE
+    assert all(c[0] == "gripper" and c[1] == "world" and c[5] == -1 for c in motion.calls)
+    assert gripper.events == ["open", "grab", "open"]
+
+
+async def test_static_cycle_stops_when_grab_reports_empty(workspace):
+    from recycle_sorter.manipulation.pickplace import static_cycle
+
+    motion = FakeMotion()
+    assert not await static_cycle(live_manipulator(workspace, motion, FakeGripper(holds=False)))
+    assert all(y == -150 for _, _, _, y, _, _, _ in motion.calls)  # never went to the place side
+
+
+async def test_linear_descent_falls_back_to_free_plan(workspace):
+    from recycle_sorter.manipulation.pickplace import static_cycle
+
+    motion = FakeMotion(fail_linear=True)
+    assert await static_cycle(live_manipulator(workspace, motion, FakeGripper()))
+    assert len(motion.calls) == len(ORIGINAL_STATIC_CYCLE)
+
+
+async def test_tcp_offset_lifts_the_commanded_frame_above_the_fingertips(workspace):
+    workspace["gripper"]["tcp_offset"] = 170
+    motion = FakeMotion()
+    await live_manipulator(workspace, motion, FakeGripper()).move_to(400, 0, -100)
+    assert motion.calls[0][4] == 70  # fingertips at -100 -> gripper frame at +70
+
+
+async def test_service_do_command_matches_original_actions(workspace):
+    from recycle_sorter.service import MyGenericService
+
+    assert str(MyGenericService.MODEL) == "hackathons:8ce08475-ece9-436b-acd5-2d213944fb83:generic-service"
+    service = MyGenericService("test")
+    service.manip = live_manipulator(workspace, FakeMotion(), FakeGripper())
+    assert await service.do_command({"action": "static-cycle"}) == {"success": True}
+    assert await service.do_command({"action": "go-to-pick"}) == {"success": True}
+    assert await service.do_command({"action": "go-to-place"}) == {"success": True}
+    assert await service.do_command({"action": "nope"}) == {"error": "unknown command"}
+    assert "error" in await service.do_command({"action": "sort"})  # no RobotClient in module mode

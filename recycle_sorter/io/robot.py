@@ -38,11 +38,21 @@ def find_camera_name(machine: RobotClient, configured: str | None) -> str:
 
 
 class LiveRobot:
-    def __init__(self, machine: RobotClient, cfg: dict[str, Any], manipulator: Manipulator, camera_name: str):
+    def __init__(self, machine: RobotClient, cfg: dict[str, Any], manipulator: Manipulator):
         self.machine, self.cfg, self.manip = machine, cfg, manipulator
-        self.camera_name = camera_name
-        self.camera = Camera.from_robot(machine, camera_name)
+        self._camera: Camera | None = None
         self._intrinsics: Intrinsics | None = None
+
+    # Resolved on first use, so arm-only actions work on a machine with no camera.
+    @property
+    def camera_name(self) -> str:
+        return find_camera_name(self.machine, self.cfg.get("camera"))
+
+    @property
+    def camera(self) -> Camera:
+        if self._camera is None:
+            self._camera = Camera.from_robot(self.machine, self.camera_name)
+        return self._camera
 
     @classmethod
     async def create(cls, dry_run: bool = False, step: bool = False) -> "LiveRobot":
@@ -64,7 +74,7 @@ class LiveRobot:
                 await arm.do_command({"set_speed": float(cfg["arm_speed"])})
             except Exception as e:
                 log.warning("could not set arm speed (%s) - check the arm model's do_command keys", e)
-        return cls(machine, cfg, manip, find_camera_name(machine, cfg.get("camera")))
+        return cls(machine, cfg, manip)
 
     async def intrinsics(self) -> Intrinsics:
         if self._intrinsics is None:
