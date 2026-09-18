@@ -94,4 +94,8 @@ pick:
   # The xArm driver ignores the motion service's speed, so the final run-in onto an object
   # is slowed by setting the arm's own joint speed, then restored (values from move_arm.py).
   grasp_speed: 8       # deg/s during the descent and grab
+  # How often to take a new picture: once | when_needed | every_pick (see run_sort). Each one
+  # is a camera download, which can take ~30 s on a slow link. --look on the CLI overrides it.
+  look: when_needed
+  disturb_clearance: 30  # when_needed: a neighbour closer than this (edge to edge) triggers a new picture
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan

@@ -69,6 +69,15 @@ Nothing about the layout is fixed in advance. Dump a pile of any size anywhere i
 4. **Sort.** Pick topmost → set it down in its pile's next slot → re-survey, until the zone is empty.
    A class first seen mid-run gets a new pile from the remaining space; a full pile grows an extension.
 
+**How many pictures.** Each picture is a camera download (2–30 s depending on the link), so `--look` sets
+how often one is taken. For four spread-out blocks:
+
+| `--look` | Pictures | Behaviour |
+|---|---|---|
+| `once` | 1 | Every pick planned from a single picture. Fastest; nothing is re-checked, so an item that was hidden, nudged or dropped stays put. |
+| `when_needed` (default) | 2 | One picture per batch. Looks again only after a failed grasp, after picking something that had a close neighbour, and once at the end to confirm the zone is empty. |
+| `every_pick` | 5 | A new picture after every pick. Slowest, most careful — use it for heaps. |
+
 **Any shape, any orientation.** Size, height and rotation are measured per item from its 3D points. The
 grasp is chosen from the item's real footprint: across a part that is solid from edge to edge over a
 finger's width, preferring the item's full width — so an arch is gripped across a leg, not through its

@@ -16,6 +16,8 @@ async def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="perceive and log planned moves; move nothing")
     ap.add_argument("--step", action="store_true", help="press Enter before every motion")
     ap.add_argument("--max-picks", type=int, default=50)
+    ap.add_argument("--look", choices=["once", "when_needed", "every_pick"],
+                    help="how often to take a new picture (default: pick.look in workspace.yaml)")
     ap.add_argument("--replay", type=Path, metavar="DIR", help="run perception over saved frames; no robot")
     ap.add_argument(
         "--action",
@@ -39,8 +41,8 @@ async def main() -> None:
 
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
     try:
-        # In dry-run the arm never moves, so one pass shows the whole plan.
-        counts = await run_sort(robot, args.mode, 1 if args.dry_run else args.max_picks)
+        # In dry-run nothing moves, so one picture gives the whole plan.
+        counts = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look)
         print("sorted:", dict(counts))
     except (KeyboardInterrupt, asyncio.CancelledError):
         await robot.manip.stop()

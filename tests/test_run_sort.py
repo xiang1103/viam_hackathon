@@ -15,6 +15,7 @@ class SimRobot:
 
     def __init__(self, scene, grab_fails_at=()):
         self.scene, self.placed, self.holding = list(scene), [], None
+        self.pictures = 0
         self.xy, self.grab_fails_at = (0.0, 0.0), list(grab_fails_at)
         self.cfg = {"perception": "depth"}
         workspace = load_yaml("workspace.yaml")
@@ -50,6 +51,7 @@ class SimRobot:
 
     # LiveRobot surface used by run_sort
     async def snapshot(self):
+        self.pictures += 1
         frame = make_frame(self.scene)
         frame.timestamp = "sim"
         return frame
@@ -102,3 +104,40 @@ async def test_a_grasp_that_keeps_failing_is_given_up_on_and_the_rest_still_gets
 
 async def test_an_empty_table_is_not_an_error():
     assert dict(await app.run_sort(SimRobot([]), "color")) == {}
+
+
+# --- how many pictures ---------------------------------------------------------------
+
+@pytest.mark.parametrize("look,pictures", [("once", 1), ("when_needed", 2), ("every_pick", 5)])
+async def test_pictures_taken_for_four_spread_out_blocks(look, pictures):
+    robot = SimRobot(SCENE)
+    counts = await app.run_sort(robot, "color", look=look)
+    assert sum(counts.values()) == 4 and robot.scene == []  # every mode sorts them all...
+    assert robot.pictures == pictures  # ...they differ in what it costs
+
+
+async def test_when_needed_looks_again_after_picking_next_to_a_close_neighbour():
+    close = [
+        {"x": 360, "y": 0, "l": 30, "w": 30, "h": 50, "yaw": 0, "color": "green"},  # tallest: picked first
+        {"x": 405, "y": 0, "l": 30, "w": 30, "h": 30, "yaw": 0, "color": "red"},  # 15 mm from it, edge to edge
+    ]
+    robot = SimRobot(close)
+    await app.run_sort(robot, "color", look="when_needed")
+    assert robot.scene == [] and robot.pictures == 3  # start, after the crowded pick, final confirmation
+
+
+async def test_when_needed_looks_again_after_a_failed_grasp_but_once_never_does():
+    stubborn = SCENE[3]
+    flexible = SimRobot(SCENE, grab_fails_at=[(stubborn["x"], stubborn["y"])])
+    await app.run_sort(flexible, "color", look="when_needed")
+    single = SimRobot(SCENE, grab_fails_at=[(stubborn["x"], stubborn["y"])])
+    counts = await app.run_sort(single, "color", look="once")
+    assert flexible.pictures > 2 and single.pictures == 1
+    assert dict(counts) == {"red": 2, "blue": 1} and single.scene == [stubborn]  # skipped it, sorted the rest
+
+
+async def test_unknown_look_mode_is_refused_before_anything_moves():
+    robot = SimRobot(SCENE)
+    with pytest.raises(ValueError, match="look must be one of"):
+        await app.run_sort(robot, "color", look="sometimes")
+    assert robot.pictures == 0 and robot.xy == (0.0, 0.0)

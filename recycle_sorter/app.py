@@ -70,14 +70,35 @@ def save_layout(workspace, layout: PileLayout, objects=None, results=None, name:
     return path
 
 
-async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
+LOOKS = ("once", "when_needed", "every_pick")
+
+
+def crowded(target: ObjectObservation, others: list[ObjectObservation], clearance: float) -> bool:
+    """Was something close enough to the target that picking it may have moved it?"""
+    return any(
+        np.linalg.norm(target.centroid - o.centroid) - (target.length + o.length) / 2 < clearance for o in others
+    )
+
+
+async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50, look: str | None = None) -> Counter:
     """Assess the unsorted zone, create piles to fit what is there, then empty it into them.
 
     1. assess   survey, find and classify everything visible
     2. plan     one pile per class, sized by count and item size, laid out in the sorted areas
-    3. sort     pick topmost -> place in its pile's next slot -> re-survey, until the zone is empty.
-                Anything the first look missed (it was buried) gets a pile made for it on the spot.
+    3. sort     pick topmost -> place in its pile's next slot, until the zone is empty.
+                Anything an earlier look missed (it was buried) gets a pile made for it on the spot.
+
+    `look` sets how often a new picture is taken (each one costs a camera download):
+      once         a single picture; every pick is planned from it. Fastest. Nothing is
+                   re-checked: an item that was hidden, nudged or dropped stays where it is.
+      when_needed  plan a whole batch from one picture; look again only after a failed grasp,
+                   after picking something that had a close neighbour, and once at the end to
+                   confirm the zone is empty.
+      every_pick   a new picture after every pick. Slowest, most careful.
     """
+    look = look or robot.manip.workspace["pick"].get("look", "when_needed")
+    if look not in LOOKS:
+        raise ValueError(f"look must be one of {LOOKS}, not {look!r}")
     sort_cfg = load_yaml("sort.yaml")
     workspace = robot.manip.workspace
     layout: PileLayout | None = None  # made on the first look, once the zones are known
@@ -88,8 +109,11 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
     attempts: list[np.ndarray] = []  # centroids of failed grasps
     failures = 0
     planned = False
+    queue: list[tuple[ObjectObservation, Classification]] = []  # seen in the last picture, not yet picked
 
-    for _ in range(max_picks):
+    async def take_a_look() -> list[tuple[ObjectObservation, Classification]]:
+        """Go to the survey pose, take one picture, and return what is in the unsorted zone."""
+        nonlocal workspace, layout, planned
         await robot.manip.goto_named("survey")
         frame = await robot.snapshot()
         if layout is None:
@@ -107,26 +131,43 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
         save_frame(frame, objects=objects if record_objects else None)
         results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
-
         if not planned:
             demand = assess(objects, results, policy)
             log.info("assessment: %s", {k: n for k, (n, _) in demand.items()} or "nothing in the unsorted zone")
             layout.plan(demand)
             log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
             planned = True
-        if not objects:
-            log.info("unsorted zone is empty - done")
-            break
+        return list(zip(objects, results))
+
+    looks, fresh = 0, False
+
+    for _ in range(max_picks):
+        if queue:
+            fresh = False
+        else:
+            if look == "once" and looks:
+                log.info("single-picture run finished")
+                break
+            fresh = True
+            looks += 1
+            queue = await take_a_look()
+            if not queue:
+                log.info("unsorted zone is empty - done")
+                break
 
         blacklist = [
             a for a in attempts
             if sum(np.linalg.norm(a - b) < 40.0 for b in attempts) >= MAX_ATTEMPTS_PER_SPOT
         ]
-        target = choose_next(objects, workspace, blacklist)
+        target = choose_next([o for o, _ in queue], workspace, blacklist)
         if target is None:
-            log.warning("%d object(s) left but none graspable (too wide or blacklisted)", len(objects))
-            break
-        result = next(r for o, r in zip(objects, results) if o is target)
+            if fresh or look == "once":
+                log.warning("%d object(s) left but none graspable (too wide or given up on)", len(queue))
+                break
+            queue = []  # the picture is old: look again before giving up
+            continue
+        result = next(r for o, r in queue if o is target)
+        queue = [(o, r) for o, r in queue if o is not target]
         key = policy.pile_key(result)
         log.info("target %s (%.2f) at (%.0f, %.0f) -> %s", result.label, result.confidence, *target.centroid, key)
 
@@ -147,12 +188,20 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
             if failures >= MAX_CONSECUTIVE_FAILURES:
                 log.error("%d consecutive failures - stopping", failures)
                 break
+            if look != "once":
+                queue = []  # the item may now be anywhere: look again
             continue
 
         failures = 0
         sorted_counts[key] += 1
         save_layout(workspace, layout)
+        if look == "every_pick":
+            queue = []
+        elif look == "when_needed" and crowded(target, [o for o, _ in queue], workspace["pick"]["disturb_clearance"]):
+            log.info("a neighbour was close to that pick - taking a new picture")
+            queue = []
 
+    log.info("pictures taken: %d", looks)
     if layout is not None:
         log.info("piles: %s", layout.summary())
     await robot.manip.goto_named("home")
