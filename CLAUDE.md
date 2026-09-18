@@ -58,20 +58,25 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 
 ## Drink order pipeline (`pipeline.py`, `llm/`)
 
-A typed order such as "2 cokes and a sparkling water" goes in. Out comes JSON naming which detected cans to pick, by YOLO box index.
-It runs entirely on this laptop through Ollama, so it needs no API key. It does not move the arm yet.
+A typed order such as "2 cokes and a sparkling water" goes in, and the arm fetches those cans.
+It runs entirely on this laptop through Ollama, so it needs no API key.
 
-- Flow, one fresh picture per command:
+- `pipeline.py` is a front end on top of `recycle_sorter`. For each command:
   1. `llm/parse_order.py` (`qwen2.5:1.5b`) turns the text into `{category: count}` plus a list of `not_supported` items.
-  2. The picture comes from the camera (`--camera`) or from a file (`--image`).
-  3. `detect_cans.py` (YOLOE) draws numbered boxes.
-  4. `scan_drinks.py: scan()` crops each box (8% padding, enlarged to 640 px), and `llm/classify_image.py` (`qwen2.5vl:7b`) labels each crop.
-  5. `pipeline.py: choose()` picks the most confident matches for each category. `low` confidence items are never picked. A shortfall goes to `missing`.
+     The result is written to `data/orders/<timestamp>.json` as `command`, `items`, and `not_supported`.
+  2. It asks `fetch this? [Y/n]` before the arm moves. `--yes` skips the question, and `--dry-run` never asks.
+  3. `run_sort(robot, "label", wanted=items)` does the rest: survey picture, YOLO boxes, the local VLM label for each crop (`classify/label_vlm.py` → `llm/classify_image.py`), then pick and place, surest reads first, one pile per category.
+  4. `result`, `fetched`, and `missing` are added to the same JSON, or `error` if the run failed. The prompt then returns for the next command.
+  - The robot connects once per session. Ctrl-C stops the arm, the same way the CLI does.
 - Run it:
-  - `python pipeline.py --camera` prompts for commands.
-  - `python pipeline.py --image pic.jpg "2 cokes"` runs one command and exits.
-  - `python scan_drinks.py --camera|<pic>` runs only the image half.
-  - `python -m llm.parse_order` runs only the text half.
+  - `python pipeline.py` prompts for commands, and **the arm moves**.
+  - Use `--step` on first runs to press Enter before every motion.
+  - `python pipeline.py --dry-run` plans and logs the moves without moving anything.
+    Dry-run skips the move to `survey`, so its picture is taken from wherever the arm is. When the arm is not at `survey`, the zone or layout can fail with errors like "no room for sorted piles".
+  - `python pipeline.py "2 cokes"` runs one command and exits.
+  - The same arm path without the prompt: `python -m recycle_sorter.cli --mode label --order "..."` or `--want coke=2`.
+  - The image half only, with no arm: `python scan_drinks.py --camera|<pic>`. It writes `data/scans/<timestamp>/` with `picture.jpg`, `detected.jpg`, `crops/`, and `results.json`.
+  - The text half only: `python -m llm.parse_order`.
 - Needs `ollama serve` running, with `qwen2.5:1.5b` and `qwen2.5vl:7b` pulled.
   - Override the models with the `ORDER_MODEL` and `VISION_MODEL` environment variables.
   - The 7B model needs about 7 GB of memory.
@@ -87,10 +92,7 @@ It runs entirely on this laptop through Ollama, so it needs no API key. It does 
 - `reference_pics/` is tracked in git. Every photo in it is sent with each crop, labelled with its category.
   - The category comes from the file or folder name. That is either a category name (`coke.JPG`) or a brand that `BRAND_KEYWORDS` knows (`canada_dry/` → `ginger_ale`).
   - `num_ctx` grows with the number of photos, about 1200 tokens per image. Ollama's default of 4096 fails with even a few photos.
-- Output: each command writes `data/scans/<timestamp>/`, which is git-ignored. It holds `picture.jpg`, `detected.jpg`, `crops/NN.jpg`, `results.json`, and `order.json`.
-  - With `--camera`, the depth frame is also saved to `data/frames/`, for the 3D grasp later.
-- Safe to run, because it never moves the arm: `pipeline.py`, `scan_drinks.py`, and `detect_cans.py`.
-  - With `--camera` they connect through `LiveRobot.create(dry_run=True)`, which skips every motion call, including `set_speed`.
+- `scan_drinks.py` and `detect_cans.py` never move the arm. With `--camera` they connect through `LiveRobot.create(dry_run=True)`, which skips every motion call, including `set_speed`.
 - Timing on this laptop, measured 2026-09-18:
   - Parsing the order takes about 2.5 s, and YOLO about 0.2 s.
   - The VLM takes about 10 s per crop. The first crop after the model loads takes about 55 s, because it has to process the reference photos.

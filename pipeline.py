@@ -1,149 +1,138 @@
-"""Full pipeline: typed command -> order -> camera picture -> YOLO boxes -> VLM labels -> picks.
+"""Full pipeline: typed command -> LLM -> order JSON -> the arm fetches the items.
 
-    $ python pipeline.py --camera
+    $ python pipeline.py
     command> 2 cokes and a sparkling water
-    {"command": "2 cokes and a sparkling water",
-     "order": {"coke": 2, "sparkling_water": 1},
-     "picks": [{"index": 5, "label": "coke", ...}, {"index": 7, ...}, {"index": 0, ...}],
-     "missing": {}, ...}
+    order: {"coke": 2, "sparkling_water": 1}   (saved to data/orders/<timestamp>.json)
+    fetch this? [Y/n]
+    ... survey, YOLO boxes, local VLM labels, pick + place ...
+    fetched: {"coke": 2, "sparkling_water": 1}
 
-Steps for every command:
-  1. llm/parse_order.py      command text -> {category: count}          (qwen2.5:1.5b)
-  2. camera / saved picture  a fresh picture, since the table changes between orders
-  3. detect_cans.py          YOLO finds every can/bottle -> numbered boxes
-  4. llm/classify_image.py   each box's crop -> category, with reference_pics/ (qwen2.5vl:7b)
-  5. choose                  for each ordered category, the most confident matching boxes
+Per command:
+  1. llm/parse_order.py   text -> {category: count} (qwen2.5:1.5b), written to data/orders/<ts>.json
+  2. confirm              the arm only moves after you accept the parsed order (skip with --yes)
+  3. recycle_sorter       run_sort(..., mode="label", wanted=order): survey picture -> YOLO boxes ->
+                          llm/classify_image.py labels each crop (qwen2.5vl:7b + reference_pics/) ->
+                          picks the surest match of each ordered category, one pile per category
+  4. result               fetched and missing counts added to the same JSON file
 
 Usage:
-    python pipeline.py --camera                         # type commands; new picture each time
-    python pipeline.py --image picture.jpg              # type commands against a saved picture
-    python pipeline.py --image picture.jpg "2 cokes"    # one command, then exit
+    python pipeline.py                     # type commands; THE ARM MOVES
+    python pipeline.py --step              # press Enter before every arm motion (first runs)
+    python pipeline.py --dry-run           # plan and log every move, move nothing
+    python pipeline.py "2 cokes"           # one command, then exit
 
-Every command is recorded in data/scans/<timestamp>/ (picture, crops, detected.jpg,
-results.json from scan_drinks.py) plus order.json with this script's output.
-Nothing here moves the arm: --camera connects read-only.
+Needs `ollama serve` with qwen2.5:1.5b and qwen2.5vl:7b, and the robot (.env).
+Image-only check with no arm: python scan_drinks.py --camera
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import logging
 import sys
-import time
-from dataclasses import asdict
+from collections import Counter
 from datetime import datetime
-from pathlib import Path
 
-import cv2
-import numpy as np
+from dotenv import load_dotenv
 
-from detect_cans import CanDetector
-from llm.classify_image import load_references
-from llm.parse_order import parse_order
-from scan_drinks import SCANS_DIR, ScannedItem, scan
+load_dotenv()  # OLLAMA_URL / models, before the llm modules read the environment
 
-# Only pick items the VLM is at least this sure about; the rest count as missing.
-MIN_CONFIDENCE = "medium"
-_RANK = {"high": 0, "medium": 1, "low": 2}
+from llm.parse_order import parse_order  # noqa: E402
+from recycle_sorter.app import run_sort  # noqa: E402
+from recycle_sorter.config import ROOT  # noqa: E402
+from recycle_sorter.io.robot import LiveRobot  # noqa: E402
+
+ORDERS_DIR = ROOT / "data" / "orders"
 
 
-def take_picture() -> np.ndarray:
-    """A live color picture from the robot's camera. Read-only: the arm never moves."""
-    from recycle_sorter.io.recorder import save_frame
-    from recycle_sorter.io.robot import LiveRobot
-
-    async def snap():
-        robot = await LiveRobot.create(dry_run=True)
-        try:
-            return await robot.snapshot()
-        finally:
-            await robot.close()
-
-    frame = asyncio.run(snap())
-    save_frame(frame)  # depth + camera pose, for the 3D grasp step later
-    return frame.color
+def _log_to_console() -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+    ours = logging.getLogger("recycle_sorter")  # not root: viam logs there too, and would print twice
+    ours.addHandler(handler)
+    ours.setLevel(logging.INFO)
+    ours.propagate = False
 
 
-def choose(order: dict[str, int], items: list[ScannedItem],
-           min_confidence: str = MIN_CONFIDENCE) -> tuple[list[ScannedItem], dict[str, int]]:
-    """For each ordered category, the best matching items (VLM confidence, then YOLO's).
-    Returns (picks, missing) where missing = {category: how many could not be found}."""
-    picks, missing = [], {}
-    for label, count in order.items():
-        matches = sorted(
-            (it for it in items
-             if it.label == label and _RANK[it.confidence] <= _RANK[min_confidence]),
-            key=lambda it: (_RANK[it.confidence], -it.yolo_confidence))
-        picks += matches[:count]
-        if len(matches) < count:
-            missing[label] = count - len(matches)
-    return picks, missing
+def _save(record: dict) -> None:
+    ORDERS_DIR.mkdir(parents=True, exist_ok=True)
+    (ORDERS_DIR / f"{record['time']}.json").write_text(json.dumps(record, indent=2))
 
 
-def run_command(command: str, image: np.ndarray, detector: CanDetector) -> dict:
-    start = time.perf_counter()
-    order = parse_order(command)
-    print(f"order: {order.items}" + (f"  not available: {order.not_supported}"
-                                     if order.not_supported else "")
-          + f"  [{time.perf_counter() - start:.1f} s]", file=sys.stderr)
+async def handle(command: str, robot: LiveRobot, args) -> dict:
+    order = await asyncio.to_thread(parse_order, command)  # blocking HTTP call to Ollama
+    record = {"time": datetime.now().strftime("%Y%m%d-%H%M%S"), "command": command,
+              "items": order.items, "not_supported": order.not_supported}
+    _save(record)
+    print(f"order: {json.dumps(order.items)}"
+          + (f"  (not available: {order.not_supported})" if order.not_supported else "")
+          + f"  -> {ORDERS_DIR / (record['time'] + '.json')}")
+    if not order.items:
+        print("nothing to fetch")
+        return record
+    if not args.yes and not args.dry_run:
+        answer = (await asyncio.to_thread(input, "fetch this? [Y/n] ")).strip().lower()
+        if answer not in ("", "y", "yes"):
+            record["result"] = "cancelled"
+            _save(record)
+            print("cancelled")
+            return record
 
-    result = {"command": command, "order": order.items, "not_supported": order.not_supported,
-              "picks": [], "missing": {}, "detections": []}
-    if not order.items:  # nothing we stock was asked for: no need to look at the table
-        return result
-
-    out_dir = SCANS_DIR / datetime.now().strftime("%Y%m%d-%H%M%S")
-    items = scan(image, detector, out_dir, log=lambda msg: print(msg, file=sys.stderr))
-    picks, missing = choose(order.items, items)
-
-    def row(it: ScannedItem) -> dict:
-        return {"index": it.index, "label": it.label, "confidence": it.confidence,
-                "bbox": list(it.bbox), "yolo_confidence": it.yolo_confidence}
-
-    result.update(picks=[row(it) for it in picks], missing=missing,
-                  detections=[row(it) for it in items], scan_dir=str(out_dir))
-    (out_dir / "order.json").write_text(json.dumps(result, indent=2))
-    print(f"total {time.perf_counter() - start:.1f} s, recorded in {out_dir}", file=sys.stderr)
-    return result
+    try:
+        fetched = await run_sort(robot, args.mode, args.max_picks,
+                                 look="once" if args.dry_run else args.look, wanted=dict(order.items))
+    except (RuntimeError, ValueError) as e:  # e.g. no room for piles, camera download failed
+        record.update(result="failed", error=str(e))
+        _save(record)
+        print(f"could not fetch the order: {e}")
+        return record
+    missing = Counter(order.items) - Counter(fetched)
+    record.update(result="planned" if args.dry_run else "done",
+                  fetched=dict(fetched), missing=dict(missing))
+    _save(record)
+    print(("planned: " if args.dry_run else "fetched: ") + json.dumps(dict(fetched))
+          + (f"  missing: {json.dumps(dict(missing))}" if missing else ""))
+    return record
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Command -> order -> YOLO + VLM -> which boxes to pick.")
-    src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--camera", action="store_true", help="live picture from the robot (read-only)")
-    src.add_argument("--image", type=Path, help="a saved color picture (png / jpg)")
+async def main() -> None:
+    ap = argparse.ArgumentParser(description="Typed command -> order JSON -> the arm fetches it.")
     ap.add_argument("command", nargs="*", help="one command to run, then exit; omit to type commands")
+    ap.add_argument("--dry-run", action="store_true", help="perceive and log planned moves; move nothing")
+    ap.add_argument("--step", action="store_true", help="press Enter before every arm motion")
+    ap.add_argument("--yes", action="store_true", help="don't ask before fetching a parsed order")
+    ap.add_argument("--mode", default="label", help="classifier in config/sort.yaml (default: local VLM)")
+    ap.add_argument("--look", choices=["once", "when_needed", "every_pick"],
+                    help="how often to take a new picture (default: pick.look in workspace.yaml)")
+    ap.add_argument("--max-picks", type=int, default=20)
     args = ap.parse_args()
+    _log_to_console()
 
-    image = None
-    if args.image:
-        image = cv2.imread(str(args.image))
-        if image is None:
-            sys.exit(f"could not read {args.image}")
-
-    print("loading YOLO and reference photos...", file=sys.stderr)
-    detector = CanDetector()
-    print(f"{len(load_references())} reference photos", file=sys.stderr)
-
-    def handle(command: str) -> None:
-        picture = take_picture() if args.camera else image
-        print(json.dumps(run_command(command, picture, detector), indent=2))
-
-    if args.command:
-        handle(" ".join(args.command))
-        return
-    print("Type a command (e.g. '2 cokes and a sparkling water'); empty line or 'quit' to exit.",
-          file=sys.stderr)
-    while True:
-        try:
-            command = input("command> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print(file=sys.stderr)
-            break
-        if not command or command.lower() in ("quit", "exit", "q"):
-            break
-        handle(command)
+    robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
+    try:
+        if args.command:
+            await handle(" ".join(args.command), robot, args)
+            return
+        print("Type a command (e.g. '2 cokes and a sparkling water'); empty line or 'quit' to exit.")
+        while True:
+            try:
+                command = (await asyncio.to_thread(input, "command> ")).strip()
+            except EOFError:
+                break
+            if not command or command.lower() in ("quit", "exit", "q"):
+                break
+            await handle(command, robot, args)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        await robot.manip.stop()  # Ctrl-C mid-pick: stop the arm before anything else
+        await robot.machine.stop_all()
+        raise
+    finally:
+        await robot.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
