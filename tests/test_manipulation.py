@@ -39,9 +39,9 @@ def test_grasp_never_goes_below_table_clearance(workspace):
 async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     caplog.set_level("INFO")
     obs = segment(make_frame(SCENE[:1]), workspace)[0]
-    m = dry_manipulator(workspace, {"bins": {"bin_a": {"x": 300, "y": 300}}})
+    m = dry_manipulator(workspace, {})
     assert await pick(m, obs)
-    await place(m, "bin_a")
+    await place(m, 300, 300)
     actions = [r.message.split("] ")[1].split(" to ")[0] for r in caplog.records]
     assert actions == [
         "open gripper", "move", "move linear", "grab", "move linear",  # pick
@@ -49,15 +49,9 @@ async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     ]
 
 
-async def test_place_rejects_bin_outside_workspace(workspace):
-    m = dry_manipulator(workspace, {"bins": {"far": {"x": 900, "y": 0}}})
+async def test_place_rejects_target_outside_workspace(workspace):
     with pytest.raises(UnsafeTarget):
-        await place(m, "far")
-
-
-async def test_untaught_bin_is_a_clear_error(workspace):
-    with pytest.raises(KeyError, match="01_teach_pose"):
-        await place(dry_manipulator(workspace, {}), "bin_a")
+        await place(dry_manipulator(workspace, {}), 900, 0)
 
 
 def test_frame_round_trips_through_recorder(tmp_path, workspace):

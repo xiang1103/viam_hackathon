@@ -50,12 +50,10 @@ async def pick(m: Manipulator, obs: ObjectObservation) -> bool:
     return await pick_at(m, *grasp_pose(obs, m.workspace))
 
 
-async def place(m: Manipulator, bin_name: str) -> None:
-    bins = m.poses.get("bins", {})
-    if bin_name not in bins:
-        raise KeyError(f"bin {bin_name!r} not taught yet - run scripts/01_teach_pose.py --bin {bin_name}")
+async def place(m: Manipulator, x: float, y: float) -> None:
+    """Release just above the table at a pile slot (see policy/piles.py)."""
     release_z = m.workspace["table_top"] + m.workspace["pick"]["place_above"]
-    await place_at(m, bins[bin_name]["x"], bins[bin_name]["y"], release_z)
+    await place_at(m, x, y, release_z)
 
 
 async def static_cycle(m: Manipulator) -> bool:

@@ -13,11 +13,22 @@ bounds:
   z_min_above_table: 5
   z_max: 600
 
-# Where the unsorted pile lives. Points outside are ignored by segmentation,
-# which also keeps the sorted piles from being re-picked.
-pile_roi:
-  x: [250, 550]
+# ZONES. The table is split into one unsorted zone and several sorted piles.
+#
+#   unsorted_zone  where you dump the mixed items. Only objects inside it are ever
+#                  picked, which is also what stops sorted items being picked again.
+#   piles          drop zones, centered on the points in poses.yaml -> piles. Each is
+#                  a size x size square holding a grid of slots slot_pitch apart
+#                  (160 / 70 -> 2x2 = 4 items before it starts stacking).
+#
+# Startup fails if a pile overlaps the unsorted zone or leaves the bounds.
+unsorted_zone:
+  x: [230, 520]
   y: [-150, 150]
+
+piles:
+  size: 160
+  slot_pitch: 70
 
 segmentation:
   min_height: 8        # mm above table to count as an object
@@ -39,5 +50,5 @@ gripper:
 pick:
   approach: 100        # standoff above the grasp / release height before descending
   lift: 150            # carry height above the grasp / release height
-  place_above: 40      # fingertip release height above the table at a bin
+  place_above: 40      # fingertip release height above the table at a pile
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan

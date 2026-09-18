@@ -41,10 +41,10 @@ async def main() -> None:
         frame = await robot.snapshot()
         save_frame(frame)
         objects = segment(frame, m.workspace)
-        print("overlay:", save_debug(frame, objects, [Classification("", 0)] * len(objects), "hover-test"))
+        print("overlay:", save_debug(frame, objects, [Classification("", 0)] * len(objects), "hover-test", m.workspace))
         target = choose_next(objects, m.workspace)
         if target is None:
-            raise SystemExit(f"found {len(objects)} object(s), none graspable - check table_top and pile_roi")
+            raise SystemExit(f"found {len(objects)} object(s), none graspable - check table_top and unsorted_zone")
 
         x, y, _, theta = grasp_pose(target, m.workspace)
         print(f"object at ({x:.0f}, {y:.0f}) top z={target.top_z:.0f} "

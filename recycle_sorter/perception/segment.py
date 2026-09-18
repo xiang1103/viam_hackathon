@@ -16,9 +16,9 @@ def table_height(frame: Frame) -> float:
 
 
 def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
-    """Find objects as blobs standing above the table plane inside the pile ROI."""
+    """Find objects as blobs standing above the table plane inside the unsorted zone."""
     seg = workspace["segmentation"]
-    roi = workspace["pile_roi"]
+    roi = workspace["unsorted_zone"]
     table_top = workspace["table_top"]
 
     pts, valid = world_points(frame)
@@ -74,9 +74,28 @@ def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
     return objects
 
 
-def draw(frame: Frame, objects: list[ObjectObservation], labels: list[str] | None = None) -> np.ndarray:
-    """Debug overlay: contours, index, label, and metric size."""
+def zone_outline_px(frame: Frame, workspace: dict[str, Any]) -> np.ndarray | None:
+    """The unsorted zone's corners (on the table plane) projected into the image, or None if behind the camera."""
+    zone, z = workspace["unsorted_zone"], workspace["table_top"]
+    corners = [(zone["x"][i], zone["y"][j], z, 1.0) for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))]
+    cam = (np.linalg.inv(frame.cam_to_world) @ np.array(corners).T).T
+    if (cam[:, 2] <= 0).any():
+        return None
+    k = frame.intrinsics
+    return np.column_stack([k.fx * cam[:, 0] / cam[:, 2] + k.cx, k.fy * cam[:, 1] / cam[:, 2] + k.cy]).round().astype(np.int32)
+
+
+def draw(
+    frame: Frame,
+    objects: list[ObjectObservation],
+    labels: list[str] | None = None,
+    workspace: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Debug overlay: unsorted zone outline, contours, index, label, and metric size."""
     img = frame.color.copy()
+    outline = zone_outline_px(frame, workspace) if workspace else None
+    if outline is not None:
+        cv2.polylines(img, [outline], isClosed=True, color=(255, 0, 255), thickness=2)
     for i, o in enumerate(objects):
         contours, _ = cv2.findContours(o.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(img, contours, -1, (0, 255, 0), 2)

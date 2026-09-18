@@ -6,8 +6,6 @@ from recycle_sorter.config import load_yaml
 from recycle_sorter.perception.frames import cam_to_world_matrix
 from recycle_sorter.perception.segment import segment, table_height
 from recycle_sorter.perception.select import choose_next
-from recycle_sorter.policy.sort_policy import SortPolicy
-from recycle_sorter.types import Classification
 
 from .synthetic import CAM_TO_WORLD, SCENE, TABLE_TOP, make_frame
 
@@ -16,7 +14,7 @@ from .synthetic import CAM_TO_WORLD, SCENE, TABLE_TOP, make_frame
 def workspace():
     ws = load_yaml("workspace.yaml")
     ws["table_top"] = TABLE_TOP
-    ws["pile_roi"] = {"x": [250, 550], "y": [-150, 150]}
+    ws["unsorted_zone"] = {"x": [250, 550], "y": [-150, 150]}
     return ws
 
 
@@ -68,10 +66,6 @@ async def test_color_labels(workspace):
         assert result.label == b["color"]
 
 
-def test_sort_policy_routes_unknown_labels():
-    policy = SortPolicy(load_yaml("sort.yaml"), "color")
-    assert policy.bin_for(Classification("red", 0.9)) == "bin_a"
-    assert policy.bin_for(Classification("grey", 0.9)) == "reject"
 
 
 async def test_cam_to_world_matrix_recovers_transform():
