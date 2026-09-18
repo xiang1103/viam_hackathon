@@ -26,6 +26,9 @@ class Frame:
     cam_to_world: np.ndarray  # 4x4, camera frame -> world frame, mm
     joints: list[float] | None = None
     timestamp: str = ""
+    # Set by perception: (a, b, d, table_top) of the table plane z = a*x + b*y + d as the CAMERA
+    # sees it. Lets drawings convert the arm-referenced heights back to what the image shows.
+    table_plane: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -44,6 +47,10 @@ class ObjectObservation:
     area_px: int
     hole_ratio: float  # fraction of bbox pixels with no depth reading
     isolation: float = float("inf")  # distance to nearest other object centroid
+    # Where the fingers should close: a spot on the footprint that is solid all the way across.
+    # For a plain block this is the centroid; for an arch or an L it is not.
+    grasp_xy: np.ndarray | None = None
+    grasp_width: float = 0.0  # how wide the object is along the closing line at grasp_xy
     points: np.ndarray | None = None  # Nx3 world-frame points, kept so a frame can be replayed offline
     source_label: str | None = None  # class given by the vision service that found it, if any
 

@@ -55,18 +55,27 @@ Two safeguards are built in regardless: heights are measured relative to the tab
 and a blob must also look different from the table, or be over 40 mm tall, to count as an object — a plain
 white table produces depth-noise bumps as tall as a block.
 
-## Zones and piles
+## Zones and piles — all dynamic
 
-Nothing about the piles is fixed in advance — only where they are *allowed* to go.
+Nothing about the layout is fixed in advance. Dump a pile of any size anywhere in the `search_region`:
 
-1. **Assess.** From the survey pose, find and classify everything in the **unsorted zone**
-   → e.g. `{red: 2, blue: 2, green: 1, grey: 1}` plus the largest item in each class.
-2. **Plan.** Create one pile per class inside the **sorted areas** (free table space you define):
-   slot count from how many were seen, slot spacing from how big they are. A **reject** pile is
-   always reserved first, for low-confidence items and classes that don't fit.
-3. **Sort.** Pick topmost → set it down in its pile's next slot → re-survey, until the zone is empty.
-   A heap hides things, so it stays dynamic: a class first seen mid-run gets a new pile from the
-   remaining space, and a pile that fills up grows an extension.
+1. **Find the pile.** On the first look the robot finds everything there and draws the **unsorted zone**
+   around it (+ a margin for hidden or nudged items). The zone is then fixed for the run; only items
+   inside it are picked, so sorted items are never re-picked.
+2. **Make room.** The **sorted areas** are generated from the free table around that zone: strips on the
+   open side, plus `front` (beyond the zone). Each is cut short so its far corner stays within reach.
+3. **Assess + plan.** Classify everything → e.g. `{red: 2, blue: 2, green: 1}` → one pile per class, slot
+   count from how many were seen, slot spacing from how big they are. **Reject** is reserved first.
+4. **Sort.** Pick topmost → set it down in its pile's next slot → re-survey, until the zone is empty.
+   A class first seen mid-run gets a new pile from the remaining space; a full pile grows an extension.
+
+**Any shape, any orientation.** Size, height and rotation are measured per item from its 3D points. The
+grasp is chosen from the item's real footprint: across a part that is solid from edge to edge over a
+finger's width, preferring the item's full width — so an arch is gripped across a leg, not through its
+hollow. The red line in `data/debug/*.png` shows exactly where the fingers will close.
+
+To pin things instead of `auto`, give `unsorted_zone` / `sorted_areas` explicit rectangles in
+[config/workspace.yaml](config/workspace.yaml), or teach areas with `scripts/01_teach_pose.py --area NAME`.
 
 Every run writes `data/debug/layout-plan.png` (the plan, before anything moves) and
 `data/debug/layout.png` (live: slots fill in as items land) — a top-down map of the table.

@@ -50,6 +50,7 @@ def level(frame: Frame, workspace: dict[str, Any]) -> tuple[np.ndarray, np.ndarr
     if fit is None:
         return pts, valid, None
     (a, b, d), tilt = fit
+    frame.table_plane = (float(a), float(b), float(d), float(workspace["table_top"]))
     pts = pts.copy()
     pts[..., 2] = workspace["table_top"] + (pts[..., 2] - (a * pts[..., 0] + b * pts[..., 1] + d)) * np.cos(np.radians(tilt))
     if tilt > MISALIGNED_TILT_DEG:
@@ -67,7 +68,7 @@ def table_report(frame: Frame, workspace: dict[str, Any]) -> str:
     if fit is None:
         return "could not find the table in view"
     (a, b, d), tilt = fit
-    u = workspace["unsorted_zone"]
+    u = workspace["unsorted_zone"] if isinstance(workspace["unsorted_zone"], dict) else workspace["search_region"]
     cx, cy = sum(u["x"]) / 2, sum(u["y"]) / 2
     verdict = "OK" if tilt <= MISALIGNED_TILT_DEG else "NOT OK - set align_color_depth: true on the camera"
     return f"camera sees the table at z = {a * cx + b * cy + d:.1f} mm (zone center), tilt {tilt:.1f} deg: {verdict}"
@@ -118,6 +119,8 @@ def observe(
     (cx, cy), (w, h), angle = cv2.minAreaRect(top[:, :2].astype(np.float32))
     short_axis = angle if w <= h else angle + 90.0
     yaw = (short_axis + 90.0) % 180.0 - 90.0
+    grasp = choose_grasp(top[:, :2], (cx, cy), short_axis + 90.0, full_width=min(w, h))
+    grasp_xy, grasp_width = grasp if grasp else (np.array([cx, cy], dtype=float), float(min(w, h)))
 
     if mask is None:
         mask = project_mask(points, frame)
@@ -141,7 +144,63 @@ def observe(
         hole_ratio=float(np.mean(bbox_depth == 0)) if bbox_depth.size else 0.0,
         points=points,
         source_label=source_label,
+        grasp_xy=np.asarray(grasp_xy, dtype=float),
+        grasp_width=float(grasp_width),
     )
+
+
+def choose_grasp(
+    top_xy: np.ndarray, center: tuple[float, float], long_axis_deg: float, full_width: float
+) -> tuple[np.ndarray, float] | None:
+    """Pick where along the object to close the fingers, from its real footprint.
+
+    The footprint is sliced across its long axis. A slice is graspable when it is
+    solid from edge to edge (no hollow for a finger to close into, as in an arch or a
+    U). Of those, the one nearest the footprint's center of mass wins, so plain blocks
+    are still held at their middle. Slices spanning the object's FULL width are preferred:
+    across the thin back of an arch is solid too, but a finger would have to fit inside
+    the hollow. Returns (xy, width across) or None.
+    """
+    c, s = np.cos(np.radians(long_axis_deg)), np.sin(np.radians(long_axis_deg))
+    rel = top_xy - np.asarray(center)
+    u, v = rel @ [c, s], rel @ [-s, c]  # along / across the long axis
+    step, cell = 6.0, 3.0
+    mass_u = float(u.mean())
+
+    # Per slice: (u mid, v low, v high), or None when it is not solid from edge to edge.
+    starts = np.arange(u.min(), u.max(), step)
+    slices: list[tuple[float, float, float] | None] = []
+    for u0 in starts:
+        inside = (u >= u0) & (u < u0 + step)
+        vs = v[inside]
+        if len(vs) < 8 or vs.max() - vs.min() < 8.0:
+            slices.append(None)
+            continue
+        lo, hi = float(vs.min()), float(vs.max())
+        # Occupancy in 2D, so a sliver of material at one end of the slice cannot make a
+        # hollow look solid.
+        cells = {(int((a - u0) // cell), int((b - lo) // cell)) for a, b in zip(u[inside], vs)}
+        full = max(1, round(step / cell)) * max(1, int(np.ceil((hi - lo) / cell)))
+        slices.append((u0 + step / 2, lo, hi) if len(cells) / full >= 0.8 else None)
+
+    best: tuple[float, float, float, float] | None = None  # rank, u, v mid, width
+    for i, sl in enumerate(slices):
+        if sl is None:
+            continue
+        gu, lo, hi = sl
+        # A fingertip is wider than one slice: what it also touches either side must be
+        # solid and about as wide, or it would bridge the edge of a hollow.
+        neighbours = [slices[k] for k in (i - 1, i + 1) if 0 <= k < len(slices) and len(u[(u >= starts[k]) & (u < starts[k] + step)]) >= 8]
+        if any(n is None or abs((n[2] - n[1]) - (hi - lo)) > 0.25 * (hi - lo) for n in neighbours):
+            continue
+        # Partial-width slices rank behind every full-width one, however central they are.
+        rank = abs(gu - mass_u) + (0.0 if hi - lo >= 0.8 * full_width else 1e6)
+        if best is None or rank < best[0]:
+            best = (rank, gu, (lo + hi) / 2, hi - lo)
+    if best is None:
+        return None
+    _, gu, gv, width = best
+    return np.asarray(center) + [gu * c - gv * s, gu * s + gv * c], width
 
 
 def in_unsorted_zone(o: ObjectObservation, workspace: dict[str, Any]) -> bool:
@@ -202,15 +261,28 @@ def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
     return finish(objects, workspace)
 
 
-def zone_outline_px(frame: Frame, workspace: dict[str, Any]) -> np.ndarray | None:
-    """The unsorted zone's corners (on the table plane) projected into the image, or None if behind the camera."""
-    zone, z = workspace["unsorted_zone"], workspace["table_top"]
-    corners = [(zone["x"][i], zone["y"][j], z, 1.0) for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))]
-    cam = (np.linalg.inv(frame.cam_to_world) @ np.array(corners).T).T
-    if (cam[:, 2] <= 0).any():
+def to_pixels(frame: Frame, world_xyz: np.ndarray) -> np.ndarray | None:
+    """Arm-referenced world points -> image pixels, or None if any is behind the camera.
+
+    Heights here are relative to the arm's table_top, while the camera may believe the
+    table is somewhere else (a calibration offset); table_plane converts between them so
+    overlays land on what the image actually shows.
+    """
+    pts = np.array(world_xyz, dtype=float)
+    if frame.table_plane is not None:
+        a, b, d, table_top = frame.table_plane
+        pts[:, 2] = a * pts[:, 0] + b * pts[:, 1] + d + (pts[:, 2] - table_top)
+    cam = (pts - frame.cam_to_world[:3, 3]) @ frame.cam_to_world[:3, :3]
+    if (cam[:, 2] <= 1).any():
         return None
     k = frame.intrinsics
     return np.column_stack([k.fx * cam[:, 0] / cam[:, 2] + k.cx, k.fy * cam[:, 1] / cam[:, 2] + k.cy]).round().astype(np.int32)
+
+
+def zone_outline_px(frame: Frame, workspace: dict[str, Any]) -> np.ndarray | None:
+    """The unsorted zone's corners, on the table, projected into the image."""
+    zone, z = workspace["unsorted_zone"], workspace["table_top"]
+    return to_pixels(frame, [(zone["x"][i], zone["y"][j], z) for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))])
 
 
 def draw(
@@ -227,6 +299,17 @@ def draw(
     for i, o in enumerate(objects):
         contours, _ = cv2.findContours(o.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(img, contours, -1, (0, 255, 0), 2)
+        if o.grasp_xy is not None:
+            # The closing line: where the two fingers end up, either side of the grasp point.
+            yaw = np.radians(o.yaw_deg)
+            reach = o.grasp_width / 2 + 12
+            d = reach * np.array([np.cos(yaw), np.sin(yaw)])
+            ends = to_pixels(frame, [[*(o.grasp_xy + d), o.top_z], [*(o.grasp_xy - d), o.top_z]])
+            if ends is not None:
+                (u0, v0), (u1, v1) = [tuple(int(c) for c in e) for e in ends]
+                cv2.line(img, (u0, v0), (u1, v1), (0, 0, 255), 2, cv2.LINE_AA)
+                cv2.circle(img, (u0, v0), 5, (0, 0, 255), -1, cv2.LINE_AA)
+                cv2.circle(img, (u1, v1), 5, (0, 0, 255), -1, cv2.LINE_AA)
         bx, by, _, _ = o.bbox
         text = f"{i}:{labels[i] if labels else ''} {o.width:.0f}x{o.length:.0f} h{o.height:.0f}"
         cv2.putText(img, text, (bx, max(by - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)

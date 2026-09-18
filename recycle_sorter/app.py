@@ -20,6 +20,7 @@ from .perception.segment import draw, segment
 from .perception.select import choose_next
 from .policy.piles import PileLayout
 from .policy.sort_policy import SortPolicy
+from .policy.zones import resolve
 from .types import Classification, Frame, ObjectObservation
 from .viz import draw_layout
 
@@ -79,9 +80,9 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
     """
     sort_cfg = load_yaml("sort.yaml")
     workspace = robot.manip.workspace
-    layout = PileLayout(workspace, robot.manip.poses)
-    layout.validate()
+    layout: PileLayout | None = None  # made on the first look, once the zones are known
     classifier, policy = make_classifier(mode, sort_cfg), SortPolicy(sort_cfg, mode)
+    record_objects = robot.cfg.get("perception", "depth") == "viam"  # a service cannot be re-run offline
 
     sorted_counts: Counter = Counter()
     attempts: list[np.ndarray] = []  # centroids of failed grasps
@@ -91,8 +92,19 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
     for _ in range(max_picks):
         await robot.manip.goto_named("survey")
         frame = await robot.snapshot()
+        if layout is None:
+            # First look: with `auto` zones, find the starting pile wherever it is, draw the
+            # unsorted zone around it and lay the sorted areas out beyond it. Fixed for the run.
+            async def find(ws: dict[str, Any]) -> list[ObjectObservation]:
+                robot.manip.workspace = ws
+                return await robot.detect(frame)
+
+            workspace, _ = await resolve(workspace, find)
+            robot.manip.workspace = workspace
+            layout = PileLayout(workspace, robot.manip.poses)
+            layout.validate()
         objects = await robot.detect(frame)
-        save_frame(frame, objects=objects)
+        save_frame(frame, objects=objects if record_objects else None)
         results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
 
@@ -141,24 +153,33 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
         sorted_counts[key] += 1
         save_layout(workspace, layout)
 
-    log.info("piles: %s", layout.summary())
+    if layout is not None:
+        log.info("piles: %s", layout.summary())
     await robot.manip.goto_named("home")
     return sorted_counts
 
 
 async def run_replay(frames_dir: Path, mode: str) -> None:
     """Assessment and pile plan for each saved frame. No robot needed."""
-    sort_cfg, workspace, poses = load_yaml("sort.yaml"), load_yaml("workspace.yaml"), load_yaml("poses.yaml")
+    sort_cfg, raw_workspace, poses = load_yaml("sort.yaml"), load_yaml("workspace.yaml"), load_yaml("poses.yaml")
     classifier, policy = make_classifier(mode, sort_cfg), SortPolicy(sort_cfg, mode)
     dirs = sorted(p.parent for p in frames_dir.rglob("meta.json"))
     if not dirs:
         raise SystemExit(f"no saved frames under {frames_dir}")
     for d in dirs:
         frame = load_frame(d)
-        recorded = load_objects(d, frame, workspace)
-        objects = recorded if recorded is not None else segment(frame, workspace)
+        recorded_here = (d / "objects.npz").exists()
+
+        async def find(ws: dict[str, Any], d=d, frame=frame) -> list[ObjectObservation]:
+            recorded = load_objects(d, frame, ws)
+            return recorded if recorded is not None else segment(frame, ws)
+
+        # Each frame is assessed as if it were the start of a run: zones, then piles.
+        workspace, _ = await resolve(raw_workspace, find)
+        objects = await find(workspace)
+        recorded = objects if recorded_here else None
         results = await classify_all(objects, frame, classifier)
-        layout = PileLayout(workspace, poses)  # each frame is assessed as if it were the start of a run
+        layout = PileLayout(workspace, poses)
         layout.validate()
         demand = assess(objects, results, policy)
         layout.plan(demand)
@@ -166,6 +187,8 @@ async def run_replay(frames_dir: Path, mode: str) -> None:
 
         source = "recorded Viam vision" if recorded is not None else "OpenCV depth segmentation"
         print(f"\n{d.name}: {len(objects)} object(s) from {source}")
+        z = workspace["unsorted_zone"]
+        print(f"  unsorted zone: x {z['x'][0]:.0f}..{z['x'][1]:.0f}, y {z['y'][0]:.0f}..{z['y'][1]:.0f}")
         print(f"  assessment: { {k: n for k, (n, _) in demand.items()} }")
         for o, r in zip(objects, results):
             mark = "*" if o is target else " "

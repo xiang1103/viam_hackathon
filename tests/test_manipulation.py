@@ -14,6 +14,7 @@ from .synthetic import SCENE, TABLE_TOP, make_frame
 def workspace():
     ws = load_yaml("workspace.yaml")
     ws["table_top"] = TABLE_TOP
+    ws["unsorted_zone"] = {"x": [230, 520], "y": [-150, 150]}
     return ws
 
 

@@ -118,3 +118,30 @@ async def test_cam_to_world_matrix_recovers_transform():
         return tuple((CAM_TO_WORLD @ np.array([x, y, z, 1.0]))[:3])
 
     assert np.allclose(await cam_to_world_matrix(transform_point), CAM_TO_WORLD)
+
+
+# --- grasp point --------------------------------------------------------------------
+
+def carve(frame, x0, x1, y0, y1, h):
+    """Remove part of a block's top (world mm rectangle) by restoring bare table there."""
+    from .synthetic import INTR
+    z = 400 - h
+    us = sorted(int(round(INTR.fx * (x - 400) / z + INTR.cx)) for x in (x0, x1))
+    vs = sorted(int(round(INTR.fy * (-y) / z + INTR.cy)) for y in (y0, y1))
+    frame.depth[vs[0]:vs[1], us[0]:us[1]] = 400
+    frame.color[vs[0]:vs[1], us[0]:us[1]] = (200, 205, 210)
+    return frame
+
+
+def test_plain_block_is_grasped_at_its_middle(workspace):
+    o = segment(make_frame([{"x": 400, "y": 0, "l": 60, "w": 30, "h": 30, "yaw": 0, "color": "red"}]), workspace)[0]
+    assert np.hypot(*(o.grasp_xy - [400, 0])) < 5
+    assert o.grasp_width == pytest.approx(30, abs=3)
+
+
+def test_arch_is_grasped_across_a_solid_leg_not_through_the_hollow(workspace):
+    # A 60x30 block lying along x with a 24 mm wide bite out of the middle of one long side.
+    frame = make_frame([{"x": 400, "y": 0, "l": 60, "w": 30, "h": 30, "yaw": 0, "color": "red"}])
+    o = segment(carve(frame, 388, 412, -15, 3, 30), workspace)[0]
+    assert abs(o.grasp_xy[0] - 400) > 14  # moved off the hollow onto a leg...
+    assert o.grasp_width == pytest.approx(30, abs=3)  # ...where the block is solid across its full width

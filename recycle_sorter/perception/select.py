@@ -18,7 +18,7 @@ def choose_next(
     candidates = [
         o
         for o in objects
-        if o.width < max_open - 5
+        if (o.grasp_width or o.width) < max_open - 5
         and not any(np.linalg.norm(o.centroid - b) < blacklist_radius for b in (blacklist or []))
     ]
     if not candidates:
