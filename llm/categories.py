@@ -32,7 +32,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
     },
     "sparkling_water": {
         "order": "sparkling / seltzer / carbonated water of any flavor "
-                 "(e.g. LaCroix, Bubly, Perrier, Topo Chico, 'lime sparkling water')",
+                 "(e.g. LaCroix, Bubly, Perrier, Topo Chico, 'lime sparkling water'). It may have different flavors like Lime, but all flavors are sparking water",
         "visual": "Sparkling water / seltzer in any flavor. Usually a slim or standard can "
                   "with bright pastel or neon graphics and a fruit name, e.g. Spindrift "
                   "(SILVER can, lowercase black 'spindrift' wordmark, bottom half one soft "
@@ -55,8 +55,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
                   "Harvest (clear bottle, pink-tinted liquid).",
     },
     "general_soda": {
-        "order": "any other soda / pop that is not Coca-Cola or Diet Coke "
-                 "(e.g. Sprite, Pepsi, Fanta, Dr Pepper, Canada Dry ginger ale, root beer)",
+        "order": "any other soda / pop that is not Coca-Cola or Diet Coke ",
         "visual": "Any other soft drink that is not a Coca-Cola product above, e.g. Pepsi "
                   "(blue with red/white/blue globe), Sprite (green), Fanta (orange), Dr Pepper "
                   "(maroon), Canada Dry ginger ale (green/white with gold crest), 7UP, "
@@ -86,14 +85,15 @@ BRAND_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
                          "pellegrino", "spindrift", "waterloo", "polar")),
     ("general_soda", ("pepsi", "sprite", "fanta", "dr pepper", "dr. pepper", "canada dry",
                       "7up", "7 up", "mountain dew", "a&w", "schweppes")),
-    ("diet_coke", ("diet coke", "coke zero", "zero sugar", "coca-cola zero", "coca cola zero",
-                   "diet")),
+    # Not "zero sugar" alone: Canada Dry and others print it too.
+    ("diet_coke", ("diet coke", "coke zero", "coca-cola zero", "coca cola zero", "diet")),
     ("coke", ("coca-cola", "coca cola", "coke")),
     ("energy_drink", ("red bull", "monster", "celsius", "rockstar", "bang", "reign",
                       "alani", "ghost", "energy")),
     ("water", ("dasani", "aquafina", "fiji", "evian", "smartwater", "poland spring",
                "deer park", "voss", "essentia", "water")),
-    ("general_soda", ("ginger ale", "root beer", "cola", "soda", "pop")),
+    # Not "cola": the VLM often reads only "Cola" off a Coca-Cola can.
+    ("general_soda", ("ginger ale", "root beer", "soda", "pop")),
 ]
 # Sodas despite the name; replaced before matching so "beer" doesn't catch them.
 _SODA_ALIASES = {"root beer": "root_soda", "ginger beer": "ginger_soda"}
