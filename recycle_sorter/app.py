@@ -11,6 +11,7 @@ import numpy as np
 from .classify.base import Classifier
 from .classify.color_hsv import HSVColorClassifier
 from .classify.vision_label import VisionLabelClassifier
+from .config import viam_credentials  # noqa: F401  (loads .env)
 from .config import DATA_DIR, load_yaml
 from .io.recorder import load_frame, load_objects, save_frame
 from .io.robot import LiveRobot
@@ -31,6 +32,15 @@ MAX_ATTEMPTS_PER_SPOT = 2
 
 
 def make_classifier(mode: str, sort_cfg: dict[str, Any]) -> Classifier:
+    kind = (sort_cfg["modes"].get(mode) or {}).get("classifier")
+    if kind == "claude_brand":
+        import os
+
+        from .classify.brand_claude import ClaudeBrandClassifier
+
+        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            raise SystemExit("mode %r reads labels with Claude: put ANTHROPIC_API_KEY=... in .env first." % mode)
+        return ClaudeBrandClassifier(sort_cfg["modes"][mode])
     if mode == "color":
         # The class is the Viam vision service that found the object; HSV covers objects
         # that did not come from one (OpenCV fallback, frames recorded without a service).
@@ -80,7 +90,27 @@ def crowded(target: ObjectObservation, others: list[ObjectObservation], clearanc
     )
 
 
-async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50, look: str | None = None) -> Counter:
+def save_scan_debug(scan: Frame, seen, results, name: str) -> Path:
+    """The eye-level picture with each item's crop box and what it was read as."""
+    img = scan.color.copy()
+    for v, r in zip(seen, results):
+        if v.box is None:
+            continue
+        x, y, w, h = v.box
+        color = (0, 200, 0) if v.readable else (0, 0, 255)
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        text = f"{r.label} {r.confidence:.2f}" if v.readable else f"hidden {v.hidden:.0%}"
+        cv2.putText(img, text, (x, max(y - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+    out = DATA_DIR / "debug"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{name}.png"
+    cv2.imwrite(str(path), img)
+    return path
+
+
+async def run_sort(
+    robot: LiveRobot, mode: str, max_picks: int = 50, look: str | None = None, look_only: bool = False
+) -> Counter:
     """Assess the unsorted zone, create piles to fit what is there, then empty it into them.
 
     1. assess   survey, find and classify everything visible
@@ -129,10 +159,21 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50, look: str |
             layout.validate()
         objects = await robot.detect(frame)
         save_frame(frame, objects=objects if record_objects else None)
-        results = await classify_all(objects, frame, classifier)
+        if getattr(classifier, "needs_scan", False) and objects:
+            # Second look, from eye level: WHERE things are came from above, WHAT they are is on
+            # their side. Items hidden behind others come back deferred, to be read on a later look.
+            await robot.manip.goto_named("scan")
+            scan = await robot.snapshot()
+            scan.timestamp = f"{frame.timestamp}-scan"
+            save_frame(scan)
+            results = await classifier.classify_scan(objects, scan, frame, workspace)
+            log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp))
+        else:
+            results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
         if not planned:
-            demand = assess(objects, results, policy)
+            readable = [(o, r) for o, r in zip(objects, results) if not r.meta.get("defer")]
+            demand = assess([o for o, _ in readable], [r for _, r in readable], policy)
             log.info("assessment: %s", {k: n for k, (n, _) in demand.items()} or "nothing in the unsorted zone")
             layout.plan(demand)
             log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
@@ -150,10 +191,20 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50, look: str |
                 break
             fresh = True
             looks += 1
-            queue = await take_a_look()
-            if not queue:
+            seen = await take_a_look()
+            if not seen:
                 log.info("unsorted zone is empty - done")
                 break
+            for o, r in seen:
+                log.info("  %-14s %.2f at (%.0f, %.0f)  %s", r.label, r.confidence, *o.centroid, r.meta.get("text_seen", ""))
+            if look_only:
+                break
+            queue = [(o, r) for o, r in seen if not r.meta.get("defer")]
+            if len(queue) < len(seen) and (not queue or look == "once"):
+                # Hidden items normally wait for a later look, once what is in front has been
+                # sorted. With nothing in front left to sort (or no later look), set them aside.
+                log.warning("%d item(s) could not be seen from the side: sending them to reject", len(seen) - len(queue))
+                queue = [(o, r if not r.meta.get("defer") else Classification("unknown", 0.0)) for o, r in seen]
 
         blacklist = [
             a for a in attempts

@@ -8,12 +8,47 @@ sorted piles. One pick-and-place loop; only the **classifier** changes per stage
 | 1 | color | OpenCV: objects from the depth image, color by HSV | built, tested offline |
 | 2 | shape | contours + height profile | next |
 | 3 | material | Claude vision → bootstraps a Viam-trained TFLite model | planned |
-| 4 | brand (soda vs water) | Claude vision close-up before the pick | stretch |
+| 4 | **brand** (cans, bottles) | top-down survey for positions + eye-level scan read by Claude | built, tested offline |
 
 ```
 survey pose → RGB-D snapshot → find the objects (inside the unsorted zone) → choose topmost
   → classify → pick → set down in that class's pile (created on demand) → re-survey
 ```
+
+## Brand mode: cans (and later bottles)
+
+```bash
+python -m recycle_sorter.cli --mode brand --step
+```
+
+Each look is **two pictures**: the top-down **survey** says *where* every can is (a 122 mm can stands far
+above the depth noise), and an eye-level **scan** shows *what* it is. Each can's known 3D position is
+projected into the scan picture and cropped out; all crops go to Claude (`claude-opus-5`) in one request,
+which names each brand. One pile per brand is created on the fly — nothing to configure per brand, and a
+water bottle is just another label.
+
+- **Hidden cans are deferred, not guessed.** A can mostly covered by a nearer one would crop to the wrong
+  can, so it is left for the next look, after the ones in front have been sorted. With `--look once` there
+  is no next look, so hidden cans go to reject.
+- **Unreadable → reject.** A label turned fully away, or confidence under `min_confidence`, is set aside
+  rather than dropped in a guessed pile.
+- **Stable names.** Names given earlier in a run are offered again on later looks, so one brand never
+  splits into two piles. List the brands on the table under `known_brands` in
+  [config/sort.yaml](config/sort.yaml) to make names stable across runs too.
+
+Setup, once:
+
+1. Put `ANTHROPIC_API_KEY=...` in `.env`.
+2. **Teach the scan pose.** Jog the arm (Viam app → CONTROL) until the wrist camera looks at the cans from
+   the side with their labels in view — low, slightly above can height, tilted a little down works well.
+   Keep the gripper body clear of the table (`move_arm.py` found a sideways gripper hits it below ~80 mm).
+   Then: `python scripts/01_teach_pose.py scan`
+3. **Check what it sees, without picking anything:**
+   `python -m recycle_sorter.cli --mode brand --look-only --step`
+   then open `data/debug/*-scan.png`: a green box on each can with the brand it read, red for hidden ones.
+   If boxes miss the cans, raise `scan.crop_margin` in [config/workspace.yaml](config/workspace.yaml) or re-teach the pose.
+
+Put cans where the scan pose can see their labels — a loose row across the camera's view beats a cluster.
 
 ## Perception: two options (`perception:` in [config/machine.yaml](config/machine.yaml))
 
@@ -184,9 +219,9 @@ recycle_sorter/                  multi-object, multi-class sorter built around t
   service.py                     same do_command interface as move_arm.py, backed by the package
   app.py / cli.py                run_sort loop, --dry-run / --step / --replay
   io/          robot.py (connect, snapshot)   recorder.py (save / load frames)
-  perception/  viam_vision.py (Viam services → objects)  pcd.py  segment.py (shared geometry + OpenCV fallback)
+  perception/  segment.py (objects from depth)  scan.py (eye-level crops, hidden cans)  viam_vision.py  pcd.py
                frames.py  select.py
-  classify/    base.py (Protocol)  vision_label.py  color_hsv.py   ← one file per stage
+  classify/    base.py (Protocol)  brand_claude.py  color_hsv.py  vision_label.py   ← one file per stage
   manipulation/ motion.py (bounds, tcp offset)  pickplace.py  safety.py
   policy/      sort_policy.py (class → pile key)  piles.py (creates + grows piles in the sorted areas)
   viz.py       top-down table map

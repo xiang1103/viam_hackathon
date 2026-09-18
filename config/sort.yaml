@@ -8,6 +8,18 @@ modes:
     min_confidence: 0.6
     groups: {}
 
+  # Cans and bottles by brand. A second, eye-level picture (the `scan` pose) is read by Claude.
+  # Needs ANTHROPIC_API_KEY in .env and a taught scan pose: scripts/01_teach_pose.py scan
+  brand:
+    classifier: claude_brand
+    min_confidence: 0.6      # below this the item goes to reject instead of a guessed pile
+    groups: {}               # e.g. {cola: [coca-cola, pepsi]} to pile rivals together
+    model: claude-opus-5
+    effort: low              # a label lookup, not a reasoning task
+    # Optional. Listing the brands on the table keeps their names stable (one pile each, never
+    # "coke" in one run and "coca-cola" in the next). Anything else still gets its own pile.
+    known_brands: []
+
 # HSV color classifier. Hues in degrees (0-360).
 colors:
   hues:

@@ -62,6 +62,11 @@ sorted_layout:
   front_x_max: 620   # how far from the arm the `front` area (beyond the zone) may extend
   max_reach: 650     # mm from the arm base to an area's far corner (top-down reach, untested)
 
+# The eye-level `scan` look (brand mode): crops are cut from it around each item found from above.
+scan:
+  crop_margin: 0.3   # extra around each item's projected box: the camera's calibration is a bit off
+  max_hidden: 0.35   # an item covered more than this by nearer ones is read on a later look instead
+
 piles:
   slot_gap: 15       # clearance added to a class's largest item -> that pile's slot spacing
   min_pitch: 50      # never space slots tighter than this
@@ -74,7 +79,7 @@ segmentation:
   top_band: 10         # mm below the object's top used for centroid / footprint
   color_delta: 22      # how different (LAB) from the table's own color a blob must look to count...
   tall_height: 40      # ...unless it stands this tall: clear of depth noise even if table-colored
-  max_object_dim: 150  # larger segments are depth noise or table edges, not an item (as move_arm.py)
+  max_object_dim: 260  # larger segments are depth noise or table edges, not an item (a water bottle is ~210)
 
 gripper:
   # Distance from the gripper FRAME ORIGIN (what motion.move positions) down to the
@@ -84,12 +89,12 @@ gripper:
   # Fine-tune with scripts/02_hover_test.py.
   tcp_offset: 70
   max_open: 80         # mm - measure on day 1; objects wider than this are skipped
-  finger_depth: 25     # how far below the object's top the fingertips go
+  finger_depth: 35     # how far below the item's top the fingertips go (below a can's tapered shoulder)
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
 
 pick:
   approach: 150        # standoff above the grasp / release height before descending (as move_arm.py)
-  lift: 150            # carry height above the grasp / release height
+  lift: 200            # carry height above the grasp / release height: a held can must clear standing ones (122 mm)
   release_clearance: 5 # release this far above the height the item was grasped at, so it is set down, not dropped
   # The xArm driver ignores the motion service's speed, so the final run-in onto an object
   # is slowed by setting the arm's own joint speed, then restored (values from move_arm.py).

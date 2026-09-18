@@ -23,6 +23,6 @@ class SortPolicy:
         self.group_of = {label: group for group, labels in (m.get("groups") or {}).items() for label in labels}
 
     def pile_key(self, c: Classification) -> str:
-        if c.confidence < self.min_confidence:
+        if c.confidence < self.min_confidence or c.label == "unknown":
             return REJECT
         return self.group_of.get(c.label, c.label)

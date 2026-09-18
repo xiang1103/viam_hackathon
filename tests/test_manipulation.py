@@ -109,6 +109,7 @@ async def test_static_cycle_commands_the_original_poses(workspace, tcp_offset):
 
     workspace["gripper"]["tcp_offset"] = tcp_offset
     workspace["bounds"]["z_max"] = 600
+    workspace["pick"].update(approach=150, lift=150)  # move_arm.py's APPROACH_MM / LIFT_MM
     motion, gripper = FakeMotion(), FakeGripper()
     assert await static_cycle(live_manipulator(workspace, motion, gripper))
     assert [(x, y, z) for _, _, x, y, z, _, _ in motion.calls] == ORIGINAL_STATIC_CYCLE
