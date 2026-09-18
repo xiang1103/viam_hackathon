@@ -34,7 +34,9 @@ CATEGORIES: dict[str, dict[str, str]] = {
         "order": "sparkling / seltzer / carbonated water of any flavor "
                  "(e.g. LaCroix, Bubly, Perrier, Topo Chico, 'lime sparkling water')",
         "visual": "Sparkling water / seltzer in any flavor. Usually a slim or standard can "
-                  "with bright pastel or neon graphics and a fruit name, e.g. LaCroix "
+                  "with bright pastel or neon graphics and a fruit name, e.g. Spindrift "
+                  "(SILVER can, lowercase black 'spindrift' wordmark, bottom half one soft "
+                  "fruit color: orange/red, blue, green, yellow), LaCroix "
                   "(colorful splash pattern), Bubly (bold solid color, smiling 'bubly' logo), "
                   "Spindrift, Waterloo, AHA, Polar; or a green glass Perrier bottle, "
                   "Topo Chico, San Pellegrino. Words like 'sparkling', 'seltzer', 'carbonated'.",
@@ -103,7 +105,8 @@ def label_from_text(text: str) -> str | None:
     for alias, soda in _SODA_ALIASES.items():
         text = text.replace(alias, f"{soda} soda")
     for label, words in BRAND_KEYWORDS:
-        # Match at a word start: "waters" hits "water", "steam" doesn't hit "tea".
-        if any(re.search(r"\b" + re.escape(w), text) for w in words):
+        # Whole words, plural allowed: "waters" hits "water", but "colada"
+        # doesn't hit "cola" and "steam" doesn't hit "tea".
+        if any(re.search(r"\b" + re.escape(w) + r"s?\b", text) for w in words):
             return label
     return None

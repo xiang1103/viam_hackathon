@@ -503,23 +503,23 @@ async def main() -> None:
     try:
         print("Resources:", [r.name for r in robot.resource_names])
 
-        # Build the service locally, wiring its dependencies from the robot
-        # client instead of from viam-server's module dependency map.
-        service = MyGenericService("local-generic-service")
-        # Mirror everything new() sets, or methods hit AttributeError.
-        service.gripper_name = DEFAULT_GRIPPER_NAME
-        service.segmenter_name = DEFAULT_SEGMENTER_NAME
-        service.camera_name = DEFAULT_CAMERA_NAME
-        service.arm_name = DEFAULT_ARM_NAME
-        service.last_pick_z = None
-        service.last_pick_pose = None
-        service.gripper = Gripper.from_robot(robot, DEFAULT_GRIPPER_NAME)
-        service.motion = MotionClient.from_robot(robot, "builtin")
-        service.segmenter = VisionClient.from_robot(robot, DEFAULT_SEGMENTER_NAME)
-        service.arm = Arm.from_robot(robot, DEFAULT_ARM_NAME)
+        # # Build the service locally, wiring its dependencies from the robot
+        # # client instead of from viam-server's module dependency map.
+        # service = MyGenericService("local-generic-service")
+        # # Mirror everything new() sets, or methods hit AttributeError.
+        # service.gripper_name = DEFAULT_GRIPPER_NAME
+        # service.segmenter_name = DEFAULT_SEGMENTER_NAME
+        # service.camera_name = DEFAULT_CAMERA_NAME
+        # service.arm_name = DEFAULT_ARM_NAME
+        # service.last_pick_z = None
+        # service.last_pick_pose = None
+        # service.gripper = Gripper.from_robot(robot, DEFAULT_GRIPPER_NAME)
+        # service.motion = MotionClient.from_robot(robot, "builtin")
+        # service.segmenter = VisionClient.from_robot(robot, DEFAULT_SEGMENTER_NAME)
+        # service.arm = Arm.from_robot(robot, DEFAULT_ARM_NAME)
 
-        result = await service.do_command({"action": "detected-cycle"})
-        print("Result:", result)
+        # result = await service.do_command({"action": "detected-cycle"})
+        # print("Result:", result)
     finally:
         await robot.close()
 

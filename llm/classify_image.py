@@ -3,7 +3,7 @@
     crop.jpg  ->  {"label": "diet_coke", "confidence": "high", "visible_text": "Diet Coke"}
 
 Requires a running Ollama server (`ollama serve`) with the model pulled
-(`ollama pull qwen2.5vl:3b`). No API key: everything runs locally.
+(`ollama pull qwen2.5vl:7b`). No API key: everything runs locally.
 
 Usage:
     python -m llm.classify_image crop1.jpg crop2.png ...
@@ -26,7 +26,7 @@ from pathlib import Path
 from llm.categories import CATEGORIES, LABELS, NOT_SUPPORTED, label_from_text
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-MODEL = os.environ.get("VISION_MODEL", "qwen2.5vl:3b")
+MODEL = os.environ.get("VISION_MODEL", "qwen2.5vl:7b")
 CONFIDENCE = ["high", "medium", "low"]
 
 # Names the VLM answers with. "coke" and "coconut_water" share a first token, and
@@ -39,6 +39,8 @@ _VISUAL_CATALOG = "\n".join(
     f"- {_TO_VLM.get(name, name)}: {c['visual']}" for name, c in CATEGORIES.items())
 
 SYSTEM_PROMPT = f"""You identify the drink in a photo of a single can, bottle or carton.
+The photo is a small, slightly blurry crop taken from ABOVE at an angle: you mostly see the \
+lid and the upper part of the label, and neighbouring cans may poke into the edges.
 
 Categories:
 {_VISUAL_CATALOG}
@@ -47,11 +49,10 @@ a non-drink object, or no drink visible.
 
 How to decide:
 1. First read any brand name, logo or words printed on the container and write them in \
-'visible_text' (empty string if nothing is readable).
-2. Use the text first; if no text is readable, use the container's colors, shape and logo.
-3. Coca-Cola products are easy to confuse: RED = regular_coke, SILVER or BLACK = diet_coke.
-4. For clear water bottles, look for 'sparkling', 'seltzer' or 'carbonated' on the label: \
-if present it is sparkling_water, otherwise water.
+'visible_text'. Write ONLY letters you can actually see - never guess or complete a brand \
+name. Partial words are fine (e.g. 'spind', 'Di'). Empty string if nothing is readable.
+2. You can rely on the text, but should use general knowledge to detect the category for each image \
+these images should be common United States brand and pictures. 
 5. 'confidence' is high when you read the brand clearly, medium when you decide from \
 colors/shape only, low when you are guessing."""
 
@@ -105,14 +106,15 @@ def classify_image(image: bytes | str | Path) -> Classification:
     label = _FROM_VLM.get(out.get("label"), out.get("label"))
     confidence = out.get("confidence") if out.get("confidence") in CONFIDENCE else "low"
     # Brand text the model read beats the label it picked (e.g. reads 'Coca-Cola'
-    # but answers coconut_water). A readable brand also means high confidence.
+    # but answers coconut_water). Confidence stays the model's own: on blurry crops
+    # it sometimes invents the text, so a keyword match alone doesn't mean "high".
     text_label = label_from_text(text)
     # Exception: the plain "Coca-Cola" logo is on Diet Coke / Coke Zero too, so it
     # doesn't overrule the model judging diet_coke from the silver/black can.
     if text_label == "coke" and label == "diet_coke":
         text_label = None
     if text_label:
-        label, confidence = text_label, "high"
+        label = text_label
     return Classification(
         label=label if label in LABELS else NOT_SUPPORTED,
         confidence=confidence,
