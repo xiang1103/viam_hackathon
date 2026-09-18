@@ -15,8 +15,94 @@ def table_height(frame: Frame) -> float:
     return float(np.median(pts[..., 2][valid]))
 
 
+def project_mask(points: np.ndarray, frame: Frame) -> np.ndarray:
+    """World points -> HxW bool image mask, by projecting them back through the camera."""
+    r, t = frame.cam_to_world[:3, :3], frame.cam_to_world[:3, 3]
+    cam = (points - t) @ r  # inverse of a rigid transform, row-vector form
+    k, (h, w) = frame.intrinsics, frame.color.shape[:2]
+    front = cam[:, 2] > 1.0
+    u = np.round(k.fx * cam[front, 0] / cam[front, 2] + k.cx).astype(int)
+    v = np.round(k.fy * cam[front, 1] / cam[front, 2] + k.cy).astype(int)
+    inside = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    mask = np.zeros((h, w), np.uint8)
+    mask[v[inside], u[inside]] = 1
+    # A point cloud is sparser than the image: close the gaps between projected points.
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8)).astype(bool)
+
+
+def observe(
+    points: np.ndarray,
+    frame: Frame,
+    workspace: dict[str, Any],
+    mask: np.ndarray | None = None,
+    source_label: str | None = None,
+) -> ObjectObservation | None:
+    """Build one ObjectObservation from an object's WORLD-frame points (Nx3, mm).
+
+    Shared by both perception paths, so size, top height and grasp angle mean the
+    same thing whether the object came from Viam vision or from depth segmentation.
+    """
+    seg, table_top = workspace["segmentation"], workspace["table_top"]
+    points = points[points[:, 2] > table_top + seg["min_height"]]  # drop any table points in the segment
+    if len(points) < 10:
+        return None
+    z = points[:, 2]
+    # The 95th percentile is the object's top even when the camera also sees one of its
+    # sides, where a point-cloud CENTER would sit too low (the reason move_arm.py
+    # hard-codes OBJECT_HEIGHT_MM).
+    top_z = float(np.percentile(z, 95))
+
+    # The top surface gives the footprint. Side faces seen in perspective would
+    # otherwise drag the centroid away from the camera axis.
+    top = points[z > top_z - seg["top_band"]]
+    if len(top) < 10:
+        return None
+    (cx, cy), (w, h), angle = cv2.minAreaRect(top[:, :2].astype(np.float32))
+    short_axis = angle if w <= h else angle + 90.0
+    yaw = (short_axis + 90.0) % 180.0 - 90.0
+
+    if mask is None:
+        mask = project_mask(points, frame)
+    ys, xs = np.nonzero(mask)
+    if len(xs):
+        bx, by, bw, bh = int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+    else:  # object is outside the color image: still sortable, just has no crop
+        bx = by = bw = bh = 0
+    bbox_depth = frame.depth[by : by + bh, bx : bx + bw]
+    return ObjectObservation(
+        mask=mask,
+        bbox=(bx, by, bw, bh),
+        crop=frame.color[by : by + bh, bx : bx + bw].copy(),
+        centroid=np.array([cx, cy], dtype=float),
+        top_z=top_z,
+        height=top_z - table_top,
+        yaw_deg=float(yaw),
+        width=float(min(w, h)),
+        length=float(max(w, h)),
+        area_px=int(mask.sum()),
+        hole_ratio=float(np.mean(bbox_depth == 0)) if bbox_depth.size else 0.0,
+        points=points,
+        source_label=source_label,
+    )
+
+
+def in_unsorted_zone(o: ObjectObservation, workspace: dict[str, Any]) -> bool:
+    zone = workspace["unsorted_zone"]
+    return zone["x"][0] < o.centroid[0] < zone["x"][1] and zone["y"][0] < o.centroid[1] < zone["y"][1]
+
+
+def finish(objects: list[ObjectObservation], workspace: dict[str, Any]) -> list[ObjectObservation]:
+    """Common last step: keep plausible objects inside the unsorted zone, then score isolation."""
+    max_dim = workspace["segmentation"]["max_object_dim"]
+    objects = [o for o in objects if in_unsorted_zone(o, workspace) and max(o.length, o.height) <= max_dim]
+    for o in objects:
+        others = [np.linalg.norm(o.centroid - p.centroid) for p in objects if p is not o]
+        o.isolation = float(min(others)) if others else float("inf")
+    return objects
+
+
 def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
-    """Find objects as blobs standing above the table plane inside the unsorted zone."""
+    """OpenCV fallback: objects are blobs standing above the table plane inside the unsorted zone."""
     seg = workspace["segmentation"]
     roi = workspace["unsorted_zone"]
     table_top = workspace["table_top"]
@@ -29,49 +115,18 @@ def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
         & (x > roi["x"][0]) & (x < roi["x"][1])
         & (y > roi["y"][0]) & (y < roi["y"][1])
     )
+    blobs = cv2.morphologyEx(above.astype(np.uint8), cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(blobs, connectivity=8)
 
-    mask = cv2.morphologyEx(above.astype(np.uint8), cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-
-    objects: list[ObjectObservation] = []
+    objects = []
     for i in range(1, n):
-        bx, by, bw, bh, area = stats[i]
-        if area < seg["min_area_px"]:
+        if stats[i][4] < seg["min_area_px"]:
             continue
         m = labels == i
-        top_z = float(np.percentile(z[m], 95))
-
-        # The top surface gives the footprint. Side faces seen in perspective
-        # would otherwise drag the centroid away from the camera axis.
-        top = m & (z > top_z - seg["top_band"])
-        xy = np.column_stack([x[top], y[top]]).astype(np.float32)
-        if len(xy) < 10:
-            continue
-        (cx, cy), (w, h), angle = cv2.minAreaRect(xy)
-        short_axis = angle if w <= h else angle + 90.0
-        yaw = (short_axis + 90.0) % 180.0 - 90.0
-
-        bbox_depth = frame.depth[by : by + bh, bx : bx + bw]
-        objects.append(
-            ObjectObservation(
-                mask=m,
-                bbox=(int(bx), int(by), int(bw), int(bh)),
-                crop=frame.color[by : by + bh, bx : bx + bw].copy(),
-                centroid=np.array([cx, cy], dtype=float),
-                top_z=top_z,
-                height=top_z - table_top,
-                yaw_deg=float(yaw),
-                width=float(min(w, h)),
-                length=float(max(w, h)),
-                area_px=int(area),
-                hole_ratio=float(np.mean(bbox_depth == 0)),
-            )
-        )
-
-    for o in objects:
-        others = [np.linalg.norm(o.centroid - p.centroid) for p in objects if p is not o]
-        o.isolation = float(min(others)) if others else float("inf")
-    return objects
+        o = observe(pts[m], frame, workspace, mask=m)
+        if o is not None:
+            objects.append(o)
+    return finish(objects, workspace)
 
 
 def zone_outline_px(frame: Frame, workspace: dict[str, Any]) -> np.ndarray | None:

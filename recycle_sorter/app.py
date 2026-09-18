@@ -10,8 +10,9 @@ import numpy as np
 
 from .classify.base import Classifier
 from .classify.color_hsv import HSVColorClassifier
+from .classify.vision_label import VisionLabelClassifier
 from .config import DATA_DIR, load_yaml
-from .io.recorder import load_frame, save_frame
+from .io.recorder import load_frame, load_objects, save_frame
 from .io.robot import LiveRobot
 from .manipulation.pickplace import grasp_pose, pick, place
 from .manipulation.safety import UnsafeTarget
@@ -30,14 +31,14 @@ MAX_ATTEMPTS_PER_SPOT = 2
 
 def make_classifier(mode: str, sort_cfg: dict[str, Any]) -> Classifier:
     if mode == "color":
-        return HSVColorClassifier(sort_cfg["colors"])
+        # The class is the Viam vision service that found the object; HSV covers objects
+        # that did not come from one (OpenCV fallback, frames recorded without a service).
+        return VisionLabelClassifier(fallback=HSVColorClassifier(sort_cfg["colors"]))
     raise ValueError(f"no classifier for mode {mode!r} yet")
 
 
-async def perceive(frame: Frame, classifier: Classifier, workspace: dict[str, Any]):
-    objects = segment(frame, workspace)
-    results = [await classifier.classify(o, frame) for o in objects]
-    return objects, results
+async def classify_all(objects: list[ObjectObservation], frame: Frame, classifier: Classifier):
+    return [await classifier.classify(o, frame) for o in objects]
 
 
 def assess(
@@ -90,8 +91,9 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
     for _ in range(max_picks):
         await robot.manip.goto_named("survey")
         frame = await robot.snapshot()
-        save_frame(frame)
-        objects, results = await perceive(frame, classifier, workspace)
+        objects = await robot.detect(frame)
+        save_frame(frame, objects=objects)
+        results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
 
         if not planned:
@@ -153,14 +155,17 @@ async def run_replay(frames_dir: Path, mode: str) -> None:
         raise SystemExit(f"no saved frames under {frames_dir}")
     for d in dirs:
         frame = load_frame(d)
-        objects, results = await perceive(frame, classifier, workspace)
+        recorded = load_objects(d, frame, workspace)
+        objects = recorded if recorded is not None else segment(frame, workspace)
+        results = await classify_all(objects, frame, classifier)
         layout = PileLayout(workspace, poses)  # each frame is assessed as if it were the start of a run
         layout.validate()
         demand = assess(objects, results, policy)
         layout.plan(demand)
         target = choose_next(objects, workspace)
 
-        print(f"\n{d.name}: {len(objects)} object(s)")
+        source = "recorded Viam vision" if recorded is not None else "OpenCV depth segmentation"
+        print(f"\n{d.name}: {len(objects)} object(s) from {source}")
         print(f"  assessment: { {k: n for k, (n, _) in demand.items()} }")
         for o, r in zip(objects, results):
             mark = "*" if o is target else " "

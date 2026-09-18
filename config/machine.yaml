@@ -4,6 +4,26 @@ gripper: gripper
 camera: cam         # as used by move_arm.py; null = auto-pick the only camera found
 motion: builtin
 
+# How objects are found.
+#   viam   Viam vision services (get_object_point_clouds), as move_arm.py does.
+#   depth  OpenCV on the raw depth image: anything standing above the table. No vision
+#          service needed; kept as a fallback and for frames recorded without one.
+perception: viam
+
+vision:
+  # class label -> the vision service that finds objects of that class. A color detector +
+  # segmenter only reports its ONE target color, so add one service per color you want
+  # sorted (Viam app: a color_detector vision service + a detections-to-segments service
+  # pointing at it), then list it here. The label is what the pile gets called.
+  # `object-segmenter` is the one move_arm.py uses - rename `target` to the color it detects.
+  segmenters:
+    target: object-segmenter
+    # blue: blue-segmenter
+    # green: green-segmenter
+  # true = take the class from each detection's own label instead (for an ML detector
+  # that names what it found); the keys above are then just names for the services.
+  use_detection_label: false
+
 # The frame motion.move() drives. Its origin is NOT the fingertips: see
 # gripper.tcp_offset in workspace.yaml.
 move_frame: gripper

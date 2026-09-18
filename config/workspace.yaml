@@ -64,6 +64,7 @@ segmentation:
   min_height: 8        # mm above table to count as an object
   min_area_px: 300
   top_band: 10         # mm below the object's top used for centroid / footprint
+  max_object_dim: 150  # larger segments are depth noise or table edges, not an item (as move_arm.py)
 
 gripper:
   # Distance from the gripper FRAME ORIGIN (what motion.move positions) down to the

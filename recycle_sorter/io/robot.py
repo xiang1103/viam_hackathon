@@ -13,11 +13,14 @@ from viam.media.video import CameraMimeType
 from viam.proto.common import Pose, PoseInFrame, Transform
 from viam.robot.client import RobotClient
 from viam.services.motion import MotionClient
+from viam.services.vision import VisionClient
 
 from ..config import load_yaml, viam_credentials
 from ..manipulation.motion import Manipulator
+from ..perception import viam_vision
 from ..perception.frames import cam_to_world_matrix
-from ..types import Frame, Intrinsics
+from ..perception.segment import segment
+from ..types import Frame, Intrinsics, ObjectObservation
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ class LiveRobot:
         self.machine, self.cfg, self.manip = machine, cfg, manipulator
         self._camera: Camera | None = None
         self._intrinsics: Intrinsics | None = None
+        self._vision: dict[str, VisionClient] | None = None
 
     # Resolved on first use, so arm-only actions work on a machine with no camera.
     @property
@@ -122,6 +126,22 @@ class LiveRobot:
             cam_to_world=await cam_to_world_matrix(self._transform_point),
             joints=list(joints.values),
             timestamp=datetime.now().strftime("%Y%m%d-%H%M%S-%f"),
+        )
+
+    async def detect(self, frame: Frame) -> list[ObjectObservation]:
+        """Objects in the unsorted zone, from Viam vision or the OpenCV fallback (machine.yaml -> perception)."""
+        if self.cfg.get("perception", "viam") != "viam":
+            return segment(frame, self.manip.workspace)
+        vision = self.cfg["vision"]
+        if self._vision is None:
+            self._vision = {label: VisionClient.from_robot(self.machine, name) for label, name in vision["segmenters"].items()}
+        return await viam_vision.detect(
+            self._vision,
+            self.camera_name,
+            frame,
+            self.manip.workspace,
+            use_detection_label=vision.get("use_detection_label", False),
+            timeout=self.cfg["rpc_timeout_s"],
         )
 
     async def close(self) -> None:
