@@ -145,6 +145,16 @@ class MyColorClassifier:
 
 `classify/color_hsv.py` is the color stage. `vision_label.py` takes the class from a Viam vision service instead, when `perception: viam`.
 
+## Resetting
+
+```bash
+python -m recycle_sorter.cli --action reset          # arm back to the survey pose (add --step to confirm first)
+python -m recycle_sorter.cli --action open-gripper   # let go of whatever it is holding
+```
+
+A run that finishes returns there by itself; after a crash or Ctrl-C the arm stays where it stopped.
+If it is holding a block, reset first and open the gripper over the table — not where it stopped mid-air.
+
 ## Working without the robot
 
 Every survey saves RGB + depth + intrinsics + camera→world **and the vision services' objects** to

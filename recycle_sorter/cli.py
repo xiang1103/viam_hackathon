@@ -21,8 +21,9 @@ async def main() -> None:
     ap.add_argument("--replay", type=Path, metavar="DIR", help="run perception over saved frames; no robot")
     ap.add_argument(
         "--action",
-        choices=["static-cycle", "go-to-pick", "go-to-place"],
-        help="blind fixed-pose motion check through this package, no camera (same poses as move_arm.py)",
+        choices=["reset", "open-gripper", "static-cycle", "go-to-pick", "go-to-place"],
+        help="one-off action, no camera: `reset` returns the arm to the survey pose, `open-gripper` "
+        "releases whatever it holds; the rest are blind fixed-pose motion checks (same poses as move_arm.py)",
     )
     args = ap.parse_args()
     handler = logging.StreamHandler()

@@ -97,6 +97,13 @@ class MyGenericService(GenericService, EasyResource):
             s = m.poses["static"]["place"]
             await place_at(m, s["x"], s["y"], s["frame_z"] - offset, s["theta"])
             return {"success": True}
+        if action in ("reset", "go-to-survey"):
+            # Back to the pose the camera surveys the table from, through the motion planner.
+            await m.goto_named("survey")
+            return {"success": True}
+        if action == "open-gripper":
+            await m.open()
+            return {"success": True}
         if action == "sort":
             if self.live is None:
                 # Not wired for module mode yet: the camera would have to arrive as a

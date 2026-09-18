@@ -187,3 +187,15 @@ async def test_service_do_command_matches_original_actions(workspace):
     assert await service.do_command({"action": "go-to-place"}) == {"success": True}
     assert await service.do_command({"action": "nope"}) == {"error": "unknown command"}
     assert "error" in await service.do_command({"action": "sort"})  # no RobotClient in module mode
+
+
+async def test_reset_returns_to_the_survey_pose_and_open_gripper_releases(workspace):
+    from recycle_sorter.service import MyGenericService
+
+    motion, gripper = FakeMotion(), FakeGripper()
+    service = MyGenericService("test")
+    service.manip = live_manipulator(workspace, motion, gripper)
+    assert await service.do_command({"action": "reset"}) == {"success": True}
+    assert round(motion.calls[-1][2]) == 197 and round(motion.calls[-1][4]) == 616  # the survey pose
+    assert await service.do_command({"action": "open-gripper"}) == {"success": True}
+    assert gripper.events == ["open"]
