@@ -8,17 +8,26 @@ modes:
     min_confidence: 0.6
     groups: {}
 
-  # Cans and bottles by brand. A second, eye-level picture (the `scan` pose) is read by Claude.
-  # Needs ANTHROPIC_API_KEY in .env and a taught scan pose: scripts/01_teach_pose.py scan
+  # Cans and bottles, read off their labels by Claude. Needs ANTHROPIC_API_KEY in .env.
   brand:
     classifier: claude_brand
+    # survey = the labels are visible in the survey picture itself (tilted camera): one picture per look.
+    # scan   = take a second, eye-level picture from a taught `scan` pose (scripts/01_teach_pose.py scan).
+    view: survey
     min_confidence: 0.6      # below this the item goes to reject instead of a guessed pile
-    groups: {}               # e.g. {cola: [coca-cola, pepsi]} to pile rivals together
     model: claude-opus-5
     effort: low              # a label lookup, not a reasoning task
-    # Optional. Listing the brands on the table keeps their names stable (one pile each, never
-    # "coke" in one run and "coca-cola" in the next). Anything else still gets its own pile.
+
+    # The piles, and what belongs in each. A pile can span brands or split one. Anything readable
+    # that fits none of them goes to an "other" pile; anything unreadable goes to reject.
+    # Remove this block to get one pile per brand instead (known_brands then pins the names).
+    categories:
+      coke: Coca-Cola Classic / Original Taste - the red can.
+      diet-coke: Diet Coke - the silver can with red lettering.
+      sparkling: Spindrift, or any other sparkling / flavored water, in every flavor.
+      energy-drink: Any energy drink, whatever the brand (Red Bull, Monster, Celsius and so on).
     known_brands: []
+    groups: {}
 
 # HSV color classifier. Hues in degrees (0-360).
 colors:

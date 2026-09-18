@@ -132,10 +132,13 @@ def test_taught_areas_replace_the_configured_guesses(workspace):
 
 
 async def test_shipped_config_is_consistent():
-    async def nothing_found(ws):
-        return []
+    async def unused(ws):
+        raise AssertionError("a pinned zone needs no first look")
 
-    resolved, _ = await resolve(load_yaml("workspace.yaml"), nothing_found)
+    shipped = load_yaml("workspace.yaml")
+    shipped["unsorted_zone"] = {"x": [250, 480], "y": [-250, -60]}  # a typical starting pile
+    resolved, _ = await resolve(shipped, unused)
+    assert resolved["sorted_areas"]  # the shipped layout settings leave room for piles around it
     PileLayout(resolved, load_yaml("poses.yaml")).validate()
     SortPolicy(load_yaml("sort.yaml"), "color")
 
@@ -185,6 +188,8 @@ async def test_sorted_areas_fill_the_free_table_beyond_the_zone_and_stay_in_reac
         for name, a in ws["sorted_areas"].items():
             if name.startswith("strip"):
                 assert a["y"][1] <= ws["unsorted_zone"]["y"][0] - ws["sorted_layout"]["gap"] + 0.1  # on the -y side
+            elif name.startswith("edge"):
+                assert a["y"][0] >= ws["unsorted_zone"]["y"][1] + ws["sorted_layout"]["gap"] - 0.1  # on the +y side
             else:
                 assert a["x"][0] >= ws["unsorted_zone"]["x"][1] + ws["sorted_layout"]["gap"] - 0.1  # beyond the zone
             far_corner = np.hypot(a["x"][1], max(abs(a["y"][0]), abs(a["y"][1])))
@@ -195,10 +200,27 @@ async def test_sorted_areas_fill_the_free_table_beyond_the_zone_and_stay_in_reac
 
 
 async def test_a_pile_hard_against_the_open_side_is_refused_with_a_clear_message(auto_workspace):
+    # A pile that fills the reachable table: no strip either side of it, and nothing beyond it.
+    auto_workspace["bounds"]["y"] = [-200, 100]
+    auto_workspace["sorted_layout"]["front_x_max"] = 450
+    frame = make_frame(scene_at(400, -60, 60))
+    assert len(segment(frame, {**auto_workspace, "unsorted_zone": auto_workspace["search_region"]})) == 3  # it IS seen
+    with pytest.raises(ValueError, match="Group the starting items closer together"):
+        await resolve(auto_workspace, finder(frame))
+
+
+async def test_an_empty_table_needs_no_piles_and_is_not_an_error(auto_workspace):
+    ws, first = await resolve(auto_workspace, finder(make_frame([])))
+    assert first == [] and ws["sorted_areas"] == {}
+
+
+async def test_when_the_open_side_is_full_piles_go_on_the_other_side_of_the_zone(auto_workspace):
     auto_workspace["search_region"]["y"] = [-440, 180]
-    auto_workspace["sorted_layout"]["front_x_max"] = 450  # and no room beyond it either
-    with pytest.raises(ValueError, match="no room for sorted piles"):
-        await resolve(auto_workspace, finder(make_frame(scene_at(400, -350, 30))))
+    auto_workspace["sorted_layout"]["front_x_max"] = 450
+    auto_workspace["bounds"]["y"] = [-200, 260]  # the open side leaves no strip, the other side does
+    ws, _ = await resolve(auto_workspace, finder(make_frame(scene_at(400, -60, 60))))
+    assert any(n.startswith("edge") for n in ws["sorted_areas"]) and not any(n.startswith("strip") for n in ws["sorted_areas"])
+    PileLayout(ws).validate()
 
 
 async def test_a_pinned_zone_is_left_alone(auto_workspace):

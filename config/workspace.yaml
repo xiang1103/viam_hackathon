@@ -49,8 +49,8 @@ sorted_areas: auto
 
 # Where the starting pile may be. Leaves at least one strip of table free on the open side.
 search_region:
-  x: [170, 600]
-  y: [-300, 180]
+  x: [170, 650]
+  y: [-600, 180]
 zone_margin: 50
 
 sorted_layout:

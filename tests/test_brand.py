@@ -187,3 +187,57 @@ async def test_look_only_reports_and_picks_nothing(monkeypatch):
     robot, _ = brand_robot(monkeypatch)
     counts = await app.run_sort(robot, "brand", look_only=True)
     assert dict(counts) == {} and len(robot.scene) == 4 and robot.placed == []
+
+
+# --- categories, and reading from the survey picture ----------------------------------------------
+
+CATEGORIES = {"coke": "the red can", "diet coke": "the silver can", "energy-drink": "any energy drink"}
+
+
+def seen_in_survey(x, y, box):
+    o = can(x, y)
+    o.bbox = box
+    return o
+
+
+def survey_frame():
+    f = eye_level_frame()
+    f.color[:] = (30, 30, 200)
+    return f
+
+
+async def test_categories_are_offered_with_their_descriptions_and_names_are_normalised():
+    claude = FakeClaude(lambda i: [("diet-coke", 0.9), ("energy-drink", 0.8)][i])
+    clf = ClaudeBrandClassifier({"categories": CATEGORIES}, client=claude)
+    objects = [seen_in_survey(400, -80, (100, 100, 90, 130)), seen_in_survey(400, 80, (300, 100, 90, 130))]
+    results = await clf.classify_batch(objects, survey_frame())
+    assert [r.label for r in results] == ["diet-coke", "energy-drink"]
+    system = claude.requests[0]["system"]
+    assert '"diet-coke": the silver can' in system and '"other"' in system
+    assert not clf.needs_scan  # survey view: no second picture
+
+
+async def test_an_answer_outside_the_categories_lands_in_other_not_a_new_pile():
+    claude = FakeClaude(lambda i: ("canada-dry", 0.95))
+    clf = ClaudeBrandClassifier({"categories": CATEGORIES}, client=claude)
+    results = await clf.classify_batch([seen_in_survey(400, 0, (100, 100, 90, 130))], survey_frame())
+    assert results[0].label == "other" and results[0].confidence == 0.95
+
+
+async def test_small_survey_crops_are_enlarged_before_being_sent():
+    import base64
+
+    import cv2
+
+    claude = FakeClaude(lambda i: ("coke", 0.9))
+    clf = ClaudeBrandClassifier({"categories": CATEGORIES}, client=claude)
+    await clf.classify_batch([seen_in_survey(400, 0, (100, 100, 90, 130))], survey_frame())
+    image = next(b for b in claude.requests[0]["messages"][0]["content"] if b["type"] == "image")
+    sent = cv2.imdecode(np.frombuffer(base64.b64decode(image["source"]["data"]), np.uint8), cv2.IMREAD_COLOR)
+    assert max(sent.shape[:2]) == 640  # a ~130 px can is scaled up so small print is legible
+
+
+async def test_an_item_with_no_usable_box_is_unknown_rather_than_dropped():
+    clf = ClaudeBrandClassifier({"categories": CATEGORIES}, client=FakeClaude(lambda i: ("coke", 0.9)))
+    results = await clf.classify_batch([seen_in_survey(400, 0, (0, 0, 0, 0))], survey_frame())
+    assert [r.label for r in results] == ["unknown"]

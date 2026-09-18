@@ -22,6 +22,7 @@ from ..manipulation.motion import Manipulator
 from ..perception import viam_vision
 from ..perception.frames import cam_to_world_matrix
 from ..perception.segment import segment
+from ..perception.yolo import YoloDetector, observations_from_boxes
 from ..types import Frame, Intrinsics, ObjectObservation
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class LiveRobot:
         self._camera: Camera | None = None
         self._intrinsics: Intrinsics | None = None
         self._vision: dict[str, VisionClient] | None = None
+        self._yolo: YoloDetector | None = None
 
     # Resolved on first use, so arm-only actions work on a machine with no camera.
     @property
@@ -157,7 +159,12 @@ class LiveRobot:
 
     async def detect(self, frame: Frame) -> list[ObjectObservation]:
         """Objects in the unsorted zone, from Viam vision or the OpenCV fallback (machine.yaml -> perception)."""
-        if self.cfg.get("perception", "viam") != "viam":
+        how = self.cfg.get("perception", "depth")
+        if how == "yolo":
+            if self._yolo is None:
+                self._yolo = YoloDetector(self.cfg["yolo"])
+            return observations_from_boxes(self._yolo.detect(frame.color), frame, self.manip.workspace)
+        if how != "viam":
             return segment(frame, self.manip.workspace)
         vision = self.cfg["vision"]
         if self._vision is None:

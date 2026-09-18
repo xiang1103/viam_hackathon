@@ -15,44 +15,55 @@ survey pose → RGB-D snapshot → find the objects (inside the unsorted zone) �
   → classify → pick → set down in that class's pile (created on demand) → re-survey
 ```
 
-## Brand mode: cans (and later bottles)
+## Cans: find them with YOLO, read their labels with Claude
 
 ```bash
 python -m recycle_sorter.cli --mode brand --step
 ```
 
-Each look is **two pictures**: the top-down **survey** says *where* every can is (a 122 mm can stands far
-above the depth noise), and an eye-level **scan** shows *what* it is. Each can's known 3D position is
-projected into the scan picture and cropped out; all crops go to Claude (`claude-opus-5`) in one request,
-which names each brand. One pile per brand is created on the fly — nothing to configure per brand, and a
-water bottle is just another label.
+1. **Find (YOLO).** `perception: yolo` runs YOLOE, an open-vocabulary YOLO that looks for the *words*
+   "can" and "bottle" — no training. It only draws the boundary; whatever it calls the item is ignored.
+   On the real table it found 9/9 cans at 0.55–0.82 confidence in 0.16 s, ignoring the laptop, power strip and
+   tape. (Standard pretrained YOLO has no "can" class: 5/9 at 0.2–0.35. Depth alone: 6/9 plus the clutter.)
+2. **Locate (depth).** The aligned depth pixels inside each box give the 3D position, height and grasp —
+   the same object the pile and motion code always used.
+3. **Read (Claude).** Each box is cropped, enlarged, and all crops go to `claude-opus-5` in one request. It
+   reads text, logo and colors, so a can turned partly away still works. With the camera tilted as it is
+   now the labels are visible in the survey picture itself (`view: survey`) — one picture per look.
+4. **Pile.** `categories` in [config/sort.yaml](config/sort.yaml) are the piles, each with a description. A pile can
+   span brands ("energy-drink") or split one ("coke" / "diet-coke"). Readable but none of them → `other`;
+   unreadable or under `min_confidence` → reject. Delete `categories` to get one pile per brand instead.
 
-- **Hidden cans are deferred, not guessed.** A can mostly covered by a nearer one would crop to the wrong
-  can, so it is left for the next look, after the ones in front have been sorted. With `--look once` there
-  is no next look, so hidden cans go to reject.
-- **Unreadable → reject.** A label turned fully away, or confidence under `min_confidence`, is set aside
-  rather than dropped in a guessed pile.
-- **Stable names.** Names given earlier in a run are offered again on later looks, so one brand never
-  splits into two piles. List the brands on the table under `known_brands` in
-  [config/sort.yaml](config/sort.yaml) to make names stable across runs too.
+`detect_cans.py` is the detector on its own, for any pipeline — load once, then ~0.2 s a picture:
 
-Setup, once:
+```python
+from detect_cans import CanDetector
+detector = CanDetector()           # ~1.5 s, once
+boxes = detector(image_bgr)        # .x0 .y0 .x1 .y1 .confidence .mask
+```
 
-1. Put `ANTHROPIC_API_KEY=...` in `.env`.
-2. **Teach the scan pose.** Jog the arm (Viam app → CONTROL) until the wrist camera looks at the cans from
-   the side with their labels in view — low, slightly above can height, tilted a little down works well.
-   Keep the gripper body clear of the table (`move_arm.py` found a sideways gripper hits it below ~80 mm).
-   Then: `python scripts/01_teach_pose.py scan`
-3. **Check what it sees, without picking anything:**
-   `python -m recycle_sorter.cli --mode brand --look-only --step`
-   then open `data/debug/*-scan.png`: a green box on each can with the brand it read, red for hidden ones.
-   If boxes miss the cans, raise `scan.crop_margin` in [config/workspace.yaml](config/workspace.yaml) or re-teach the pose.
+```bash
+python detect_cans.py data/frames/<timestamp>/color.png    # writes color.detected.jpg next to it
+python detect_cans.py --camera                              # live picture (moves nothing) + 3D positions and reach
+```
 
-Put cans where the scan pose can see their labels — a loose row across the camera's view beats a cluster.
+Setup: `ANTHROPIC_API_KEY=...` in `.env`. The first YOLO run downloads weights into `models/` (28 MB, plus a
+600 MB text encoder needed only that once; the prompts are then cached). To use your own trained model:
+`yolo: {kind: yolo, weights: models/yours.pt}` in [config/machine.yaml](config/machine.yaml).
 
-## Perception: two options (`perception:` in [config/machine.yaml](config/machine.yaml))
+**Keep the cans within reach.** The arm (xArm 5/6/7 family) reaches ~650 mm top-down. Items further out are
+reported and left. Piles are made in whatever table is free around the cans — either side of them, or
+beyond — so a starting group that fills the whole reachable table leaves nowhere to sort *to*, and the run
+refuses with a message saying so. `--look-only` shows what it found and the plan without picking anything.
 
-**`depth` (default, used for color).** OpenCV on the depth image: anything standing above the table
+`view: scan` (a second, eye-level picture from a taught `scan` pose, with cans hidden behind others deferred
+to the next look) is still there for a camera that looks straight down and cannot see the labels.
+
+## Perception options (`perception:` in [config/machine.yaml](config/machine.yaml))
+
+**`yolo` (default, for cans).** See above.
+
+**`depth` (for the colored blocks).** OpenCV on the depth image: anything standing above the table
 inside the unsorted zone is an object; its color is read afterwards with HSV. It is class-agnostic, which
 is what "assess the zone, then create piles to fit" needs: whatever colors turn up get piles, including
 black / white / grey, with nothing to configure per color (hues live in [config/sort.yaml](config/sort.yaml)).

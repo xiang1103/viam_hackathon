@@ -52,7 +52,8 @@ class ObjectObservation:
     grasp_xy: np.ndarray | None = None
     grasp_width: float = 0.0  # how wide the object is along the closing line at grasp_xy
     points: np.ndarray | None = None  # Nx3 world-frame points, kept so a frame can be replayed offline
-    source_label: str | None = None  # class given by the vision service that found it, if any
+    source_label: str | None = None  # class given by the detector / vision service that found it, if any
+    detection_confidence: float = 1.0  # the detector's confidence, when one found it
 
 
 @dataclass

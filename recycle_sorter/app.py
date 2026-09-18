@@ -159,6 +159,8 @@ async def run_sort(
             layout.validate()
         objects = await robot.detect(frame)
         save_frame(frame, objects=objects if record_objects else None)
+        if not objects:
+            return []
         if getattr(classifier, "needs_scan", False) and objects:
             # Second look, from eye level: WHERE things are came from above, WHAT they are is on
             # their side. Items hidden behind others come back deferred, to be read on a later look.
@@ -168,6 +170,8 @@ async def run_sort(
             save_frame(scan)
             results = await classifier.classify_scan(objects, scan, frame, workspace)
             log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp))
+        elif hasattr(classifier, "classify_batch"):
+            results = await classifier.classify_batch(objects, frame)  # all items in one request
         else:
             results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
@@ -263,6 +267,12 @@ async def run_replay(frames_dir: Path, mode: str) -> None:
     """Assessment and pile plan for each saved frame. No robot needed."""
     sort_cfg, raw_workspace, poses = load_yaml("sort.yaml"), load_yaml("workspace.yaml"), load_yaml("poses.yaml")
     classifier, policy = make_classifier(mode, sort_cfg), SortPolicy(sort_cfg, mode)
+    machine = load_yaml("machine.yaml")
+    yolo = None
+    if machine.get("perception") == "yolo":
+        from .perception.yolo import YoloDetector, observations_from_boxes
+
+        yolo = YoloDetector(machine["yolo"])
     dirs = sorted(p.parent for p in frames_dir.rglob("meta.json"))
     if not dirs:
         raise SystemExit(f"no saved frames under {frames_dir}")
@@ -272,20 +282,27 @@ async def run_replay(frames_dir: Path, mode: str) -> None:
 
         async def find(ws: dict[str, Any], d=d, frame=frame) -> list[ObjectObservation]:
             recorded = load_objects(d, frame, ws)
-            return recorded if recorded is not None else segment(frame, ws)
+            if recorded is not None:
+                return recorded
+            if yolo is not None:
+                return observations_from_boxes(yolo.detect(frame.color), frame, ws)
+            return segment(frame, ws)
 
         # Each frame is assessed as if it were the start of a run: zones, then piles.
         workspace, _ = await resolve(raw_workspace, find)
         objects = await find(workspace)
         recorded = objects if recorded_here else None
-        results = await classify_all(objects, frame, classifier)
+        if hasattr(classifier, "classify_batch") and not getattr(classifier, "needs_scan", False):
+            results = await classifier.classify_batch(objects, frame)
+        else:
+            results = await classify_all(objects, frame, classifier)
         layout = PileLayout(workspace, poses)
         layout.validate()
         demand = assess(objects, results, policy)
         layout.plan(demand)
         target = choose_next(objects, workspace)
 
-        source = "recorded Viam vision" if recorded is not None else "OpenCV depth segmentation"
+        source = "recorded Viam vision" if recorded is not None else "YOLO + depth" if yolo is not None else "OpenCV depth segmentation"
         print(f"\n{d.name}: {len(objects)} object(s) from {source}")
         z = workspace["unsorted_zone"]
         print(f"  unsorted zone: x {z['x'][0]:.0f}..{z['x'][1]:.0f}, y {z['y'][0]:.0f}..{z['y'][1]:.0f}")

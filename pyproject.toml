@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "anthropic",
+    "ultralytics",  # YOLO; open-vocabulary YOLOE also pulls in its `clip` package on first use
 ]
 
 [project.optional-dependencies]
