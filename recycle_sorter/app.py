@@ -126,7 +126,7 @@ async def run_sort(robot: LiveRobot, mode: str, max_picks: int = 50) -> Counter:
         if target is None:
             log.warning("%d object(s) left but none graspable (too wide or blacklisted)", len(objects))
             break
-        result = results[objects.index(target)]
+        result = next(r for o, r in zip(objects, results) if o is target)
         key = policy.pile_key(result)
         log.info("target %s (%.2f) at (%.0f, %.0f) -> %s", result.label, result.confidence, *target.centroid, key)
 

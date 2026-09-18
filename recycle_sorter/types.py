@@ -16,7 +16,7 @@ class Intrinsics:
     cy: float
 
 
-@dataclass
+@dataclass(eq=False)  # holds arrays: compare by identity, never element-wise
 class Frame:
     """One RGB-D snapshot plus everything needed to interpret it offline."""
 
@@ -31,7 +31,7 @@ class Frame:
     table_plane: tuple[float, float, float, float] | None = None
 
 
-@dataclass
+@dataclass(eq=False)  # holds arrays: compare by identity, never element-wise
 class ObjectObservation:
     """One segmented object. All metric quantities are world frame, mm / degrees."""
 
