@@ -64,8 +64,9 @@ How to decide:
 'visible_text'. Write ONLY letters you can actually see - never guess or complete a brand \
 name. Partial words are fine (e.g. 'spind', 'Di'). Empty string if nothing is readable.
 2. You can rely on the text, but should use general knowledge to detect the category for each image \
-these images should be common United States brand and pictures. 
-3. 'confidence' is high when you read the brand clearly, medium when you decide from \
+these images should be common United States brand and pictures.
+3. Do not only rely on the text. You should also get a general knowledge guess based on the shape, color of the bottle. 
+4. 'confidence' is high when you read the brand clearly, medium when you decide from \
 colors/shape only, low when you are guessing."""
 
 REFERENCE_INSTRUCTIONS = """Before the photo to classify, you are shown reference photos of \

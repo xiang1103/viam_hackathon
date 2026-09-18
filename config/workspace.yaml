@@ -21,7 +21,8 @@ bounds:
   # Floor learned on hardware in move_arm.py: a top-down gripper frame below ~60 mm
   # drives the wrist links into the table.
   frame_z_min: 60
-  named_x_min: 50        # taught poses (survey) hang high above the table and may sit closer to the base than a pick can
+  named_x_min: 20        # taught poses (survey) hang high above the table and may sit closer to the base than a pick can;
+                         # 20 (was 50) admits the lower survey (cam_lower_pos, x = 37), which the arm has stood at
   frame_z_max: 750
 
 # Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
