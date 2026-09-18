@@ -44,7 +44,8 @@ def grasp_pose(obs: ObjectObservation, workspace: dict) -> tuple[float, float, f
     """Top-down grasp: (x, y, z, theta). Fingers close across the object's short axis."""
     g = workspace["gripper"]
     z = max(obs.top_z - g["finger_depth"], workspace["table_top"] + workspace["bounds"]["z_min_above_table"])
-    return float(obs.centroid[0]), float(obs.centroid[1]), z, obs.yaw_deg + g["yaw_offset_deg"]
+    x, y = obs.grasp_xy if obs.grasp_xy is not None else obs.centroid
+    return float(x), float(y), z, obs.yaw_deg + g["yaw_offset_deg"]
 
 
 async def pick(m: Manipulator, obs: ObjectObservation) -> bool:

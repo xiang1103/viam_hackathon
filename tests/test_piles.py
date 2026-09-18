@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from recycle_sorter.app import assess
@@ -5,6 +6,7 @@ from recycle_sorter.config import load_yaml
 from recycle_sorter.perception.segment import segment
 from recycle_sorter.policy.piles import REJECT, PileLayout
 from recycle_sorter.policy.sort_policy import SortPolicy
+from recycle_sorter.policy.zones import resolve
 from recycle_sorter.types import Classification
 
 from .synthetic import TABLE_TOP, make_frame
@@ -14,7 +16,8 @@ from .synthetic import TABLE_TOP, make_frame
 def workspace():
     ws = load_yaml("workspace.yaml")
     ws["table_top"] = TABLE_TOP
-    ws["sorted_areas"] = {"left": {"x": [200, 560], "y": [200, 360]}, "right": {"x": [200, 560], "y": [-360, -200]}}
+    ws["unsorted_zone"] = {"x": [230, 520], "y": [-150, 150]}
+    ws["sorted_areas"] = {"near": {"x": [200, 560], "y": [-360, -200]}, "far": {"x": [200, 480], "y": [-440, -380]}}
     ws["piles"] = {"slot_gap": 20, "min_pitch": 50, "spare_slots": 2, "pile_gap": 30}
     return ws
 
@@ -103,7 +106,7 @@ def test_full_pile_grows_an_extension(workspace):
 
 
 def test_new_class_goes_to_reject_when_the_areas_are_full(workspace):
-    workspace["sorted_areas"] = {"only": {"x": [200, 420], "y": [200, 260]}}  # room for very little
+    workspace["sorted_areas"] = {"only": {"x": [200, 420], "y": [-260, -200]}}  # room for very little
     layout = PileLayout(workspace)
     layout.plan({"red": (1, 30.0)})
     assert layout.next_slot("green", 30.0)[0] == REJECT
@@ -112,22 +115,93 @@ def test_new_class_goes_to_reject_when_the_areas_are_full(workspace):
 # --- safety ---------------------------------------------------------------------
 
 def test_area_overlapping_unsorted_zone_is_rejected(workspace):
-    workspace["sorted_areas"]["bad"] = {"x": [300, 400], "y": [100, 250]}
+    workspace["sorted_areas"]["bad"] = {"x": [300, 400], "y": [-250, -100]}
     with pytest.raises(ValueError, match="picked again"):
         PileLayout(workspace).validate()
 
 
 def test_area_outside_bounds_is_rejected(workspace):
-    workspace["sorted_areas"]["far"] = {"x": [600, 760], "y": [200, 300]}
+    workspace["sorted_areas"]["off_table"] = {"x": [300, 400], "y": [200, 300]}
     with pytest.raises(ValueError, match="outside the workspace"):
         PileLayout(workspace).validate()
 
 
 def test_taught_areas_replace_the_configured_guesses(workspace):
-    taught = {"sorted_areas": {"taught": {"x": [250, 450], "y": [220, 330]}}}
+    taught = {"sorted_areas": {"taught": {"x": [250, 450], "y": [-330, -220]}}}
     assert list(PileLayout(workspace, taught).areas) == ["taught"]
 
 
-def test_shipped_config_is_consistent():
-    PileLayout(load_yaml("workspace.yaml"), load_yaml("poses.yaml")).validate()
+async def test_shipped_config_is_consistent():
+    async def nothing_found(ws):
+        return []
+
+    resolved, _ = await resolve(load_yaml("workspace.yaml"), nothing_found)
+    PileLayout(resolved, load_yaml("poses.yaml")).validate()
     SortPolicy(load_yaml("sort.yaml"), "color")
+
+
+# --- dynamic zones -----------------------------------------------------------------
+
+@pytest.fixture
+def auto_workspace():
+    ws = load_yaml("workspace.yaml")
+    ws["table_top"] = TABLE_TOP
+    assert ws["unsorted_zone"] == "auto" and ws["sorted_areas"] == "auto"
+    return ws
+
+
+def finder(frame):
+    async def find(ws):
+        return segment(frame, ws)
+    return find
+
+
+def scene_at(cx, cy, spread):
+    return [
+        {"x": cx - spread, "y": cy - spread, "l": 30, "w": 30, "h": 30, "yaw": 0, "color": "red"},
+        {"x": cx + spread, "y": cy + spread, "l": 60, "w": 25, "h": 25, "yaw": 40, "color": "blue"},
+        {"x": cx, "y": cy, "l": 30, "w": 30, "h": 50, "yaw": 0, "color": "green"},
+    ]
+
+
+@pytest.mark.parametrize("cx,cy,spread", [(400, 0, 50), (360, -60, 50), (420, 40, 90)])
+async def test_zone_follows_the_starting_pile_whatever_its_size_and_position(auto_workspace, cx, cy, spread):
+    frame = make_frame(scene_at(cx, cy, spread))
+    ws, first = await resolve(auto_workspace, finder(frame))
+    zone = ws["unsorted_zone"]
+    assert len(first) == 3 and len(segment(frame, ws)) == 3  # everything found, and still found with the zone fixed
+    # The zone hugs the pile: it contains every item with margin, but is not the whole search region.
+    for o in first:
+        assert zone["x"][0] < o.points[:, 0].min() and o.points[:, 0].max() < zone["x"][1]
+        assert zone["y"][0] < o.points[:, 1].min() and o.points[:, 1].max() < zone["y"][1]
+    assert zone["x"][1] - zone["x"][0] < 2 * spread + 60 + 2 * auto_workspace["zone_margin"] + 5
+
+
+async def test_sorted_areas_fill_the_free_table_beyond_the_zone_and_stay_in_reach(auto_workspace):
+    small, _ = await resolve(auto_workspace, finder(make_frame(scene_at(400, 60, 30))))
+    big, _ = await resolve(auto_workspace, finder(make_frame(scene_at(400, -60, 110))))
+    for ws in (small, big):
+        PileLayout(ws).validate()  # no overlap with the zone or each other, inside the bounds
+        for name, a in ws["sorted_areas"].items():
+            if name.startswith("strip"):
+                assert a["y"][1] <= ws["unsorted_zone"]["y"][0] - ws["sorted_layout"]["gap"] + 0.1  # on the -y side
+            else:
+                assert a["x"][0] >= ws["unsorted_zone"]["x"][1] + ws["sorted_layout"]["gap"] - 0.1  # beyond the zone
+            far_corner = np.hypot(a["x"][1], max(abs(a["y"][0]), abs(a["y"][1])))
+            assert far_corner <= ws["sorted_layout"]["max_reach"] + 1
+    # A pile that spreads toward the open side leaves less room: fewer or shallower strips.
+    depth = lambda ws: sum(a["y"][1] - a["y"][0] for n, a in ws["sorted_areas"].items() if n.startswith("strip"))
+    assert depth(big) < depth(small)
+
+
+async def test_a_pile_hard_against_the_open_side_is_refused_with_a_clear_message(auto_workspace):
+    auto_workspace["search_region"]["y"] = [-440, 180]
+    auto_workspace["sorted_layout"]["front_x_max"] = 450  # and no room beyond it either
+    with pytest.raises(ValueError, match="no room for sorted piles"):
+        await resolve(auto_workspace, finder(make_frame(scene_at(400, -350, 30))))
+
+
+async def test_a_pinned_zone_is_left_alone(auto_workspace):
+    auto_workspace["unsorted_zone"] = {"x": [230, 520], "y": [-150, 150]}
+    ws, first = await resolve(auto_workspace, finder(make_frame(scene_at(400, 0, 40))))
+    assert first is None and ws["unsorted_zone"] == {"x": [230, 520], "y": [-150, 150]}

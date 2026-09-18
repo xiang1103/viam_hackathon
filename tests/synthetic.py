@@ -21,6 +21,7 @@ BGR = {
     "blue": (220, 60, 30),
     "yellow": (30, 220, 230),
     "grey": (128, 128, 128),
+    "table": (200, 205, 210),  # an item the same color as the table
 }
 
 

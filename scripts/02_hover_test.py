@@ -24,6 +24,7 @@ from recycle_sorter.io.recorder import save_frame
 from recycle_sorter.io.robot import LiveRobot
 from recycle_sorter.manipulation.pickplace import grasp_pose
 from recycle_sorter.perception.select import choose_next
+from recycle_sorter.policy.zones import resolve
 from recycle_sorter.types import Classification
 
 
@@ -38,8 +39,13 @@ async def main() -> None:
     try:
         await m.goto_named("survey")
         frame = await robot.snapshot()
+        async def find(ws):
+            m.workspace = ws
+            return await robot.detect(frame)
+
+        m.workspace, _ = await resolve(m.workspace, find)  # `auto` zone: wherever the block is
         objects = await robot.detect(frame)
-        save_frame(frame, objects=objects)
+        save_frame(frame)
         print("overlay:", save_debug(frame, objects, [Classification("", 0)] * len(objects), "hover-test", m.workspace))
         target = choose_next(objects, m.workspace)
         if target is None:

@@ -2,7 +2,7 @@
 
     python scripts/03_record_frames.py            # one frame -> data/frames/<timestamp>/
     python scripts/03_record_frames.py -n 5       # five frames, Enter between each (rearrange the pile)
-    python scripts/03_record_frames.py --table    # BARE table: print its measured world z for workspace.yaml
+    python scripts/03_record_frames.py --table    # BARE table: where the camera sees it, and whether depth is aligned
 
 Then:  python -m recycle_sorter.cli --replay data/frames
 """
@@ -11,7 +11,7 @@ import asyncio
 
 from recycle_sorter.io.recorder import save_frame
 from recycle_sorter.io.robot import LiveRobot
-from recycle_sorter.perception.segment import table_height
+from recycle_sorter.perception.segment import table_report
 
 
 async def main() -> None:
@@ -28,7 +28,7 @@ async def main() -> None:
             frame = await robot.snapshot()
             print("saved", save_frame(frame))
             if args.table:
-                print(f"table_top: {table_height(frame):.1f}   <- put this in config/workspace.yaml")
+                print(table_report(frame, robot.manip.workspace))
     finally:
         await robot.close()
 

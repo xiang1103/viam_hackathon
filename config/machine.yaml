@@ -5,10 +5,13 @@ camera: cam         # as used by move_arm.py; null = auto-pick the only camera f
 motion: builtin
 
 # How objects are found.
-#   viam   Viam vision services (get_object_point_clouds), as move_arm.py does.
-#   depth  OpenCV on the raw depth image: anything standing above the table. No vision
-#          service needed; kept as a fallback and for frames recorded without one.
-perception: viam
+#   depth  OpenCV on the depth image: ANYTHING standing above the table is an object, and
+#          its color is read afterwards (HSV). Class-agnostic, so whatever colors turn up
+#          get piles - including black/white/grey - with no per-color setup. Best for color.
+#   viam   Viam vision services (get_object_point_clouds), as move_arm.py does. A color
+#          detector only sees the colors it was configured for, so unlisted colors are
+#          never picked. Best later, with a trained detector that names what it finds.
+perception: depth
 
 vision:
   # class label -> the vision service that finds objects of that class. A color detector +
@@ -36,3 +39,5 @@ trust_is_holding: false
 # the driver default of 60; 25 is deliberately cautious while this code is unproven on the arm.
 arm_speed: 25
 rpc_timeout_s: 30
+# A color + raw depth frame is megabytes; over a relayed connection it can take a while.
+image_timeout_s: 90

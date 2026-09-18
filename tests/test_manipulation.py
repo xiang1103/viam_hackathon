@@ -14,6 +14,7 @@ from .synthetic import SCENE, TABLE_TOP, make_frame
 def workspace():
     ws = load_yaml("workspace.yaml")
     ws["table_top"] = TABLE_TOP
+    ws["unsorted_zone"] = {"x": [230, 520], "y": [-150, 150]}
     return ws
 
 
@@ -25,7 +26,7 @@ def dry_manipulator(workspace, poses):
 def test_bounds_reject_targets_outside_workspace(workspace):
     ok_z = TABLE_TOP + 100
     check_target(400, 0, ok_z, workspace)
-    off_the_table_edge = (400, -300, ok_z)  # the arm sits at the table's -y edge
+    off_the_table_edge = (400, 300, ok_z)  # measured: the table ends ~220-265 mm out on the +y side
     for bad in [(100, 0, ok_z), (720, 0, ok_z), (400, 480, ok_z), off_the_table_edge, (400, 0, TABLE_TOP + 2), (400, 0, 900)]:
         with pytest.raises(UnsafeTarget):
             check_target(*bad, workspace)
@@ -43,7 +44,7 @@ async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     obs = segment(make_frame(SCENE[:1]), workspace)[0]
     m = dry_manipulator(workspace, {})
     assert await pick(m, obs)
-    await place(m, 300, 300, TABLE_TOP + 10)
+    await place(m, 300, -300, TABLE_TOP + 10)
     actions = [r.message.split("] ")[1].split(" to ")[0] for r in caplog.records]
     assert actions == [
         "open gripper", "move", "move linear", "grab", "move linear",  # pick
@@ -186,3 +187,15 @@ async def test_service_do_command_matches_original_actions(workspace):
     assert await service.do_command({"action": "go-to-place"}) == {"success": True}
     assert await service.do_command({"action": "nope"}) == {"error": "unknown command"}
     assert "error" in await service.do_command({"action": "sort"})  # no RobotClient in module mode
+
+
+async def test_reset_returns_to_the_survey_pose_and_open_gripper_releases(workspace):
+    from recycle_sorter.service import MyGenericService
+
+    motion, gripper = FakeMotion(), FakeGripper()
+    service = MyGenericService("test")
+    service.manip = live_manipulator(workspace, motion, gripper)
+    assert await service.do_command({"action": "reset"}) == {"success": True}
+    assert round(motion.calls[-1][2]) == 197 and round(motion.calls[-1][4]) == 616  # the survey pose
+    assert await service.do_command({"action": "open-gripper"}) == {"success": True}
+    assert gripper.events == ["open"]

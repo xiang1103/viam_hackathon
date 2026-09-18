@@ -10,9 +10,11 @@ table_top: 0.0
 # before they reach the planner. Walls are at x=740 and y=500.
 bounds:
   x: [150, 700]
-  # -y is the table edge the arm sits at: -200 keeps the gripper over the table while still
-  # allowing move_arm.py's proven pick at y=-150. Measure the real edge and tighten if needed.
-  y: [-200, 460]
+  # MEASURED 2026-09-18 from an aligned depth frame: the table surface runs from y = -530
+  # to y = +220 (near the arm) .. +265 (further out). So the arm sits near the table's +y
+  # edge and the open table is toward -y. +180 keeps the gripper over the table while
+  # still allowing move_arm.py's proven place at y = +150.
+  y: [-460, 180]
   z_min_above_table: 5
   z_max: 600
   # Limits on the gripper FRAME origin (what motion.move positions), not the fingertips.
@@ -22,37 +24,43 @@ bounds:
   frame_z_max: 750
 
 # Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
-# the table: "front" = you face the arm (arm at top), "behind" = you stand behind it.
-map_view: front
+# the table: "front" = you face the arm (arm at top), "behind" = you stand behind it
+# (arm at bottom, +y on your left).
+map_view: behind
 
-# ZONES. The table is split into one unsorted zone and the areas where piles may be made.
+# ZONES. One unsorted zone (the starting pile) and the areas where sorted piles may be made.
+# Both can be `auto`, so the starting pile can be any size, anywhere in the search region:
 #
-#   unsorted_zone  where you dump the mixed items. Only objects inside it are ever
-#                  picked, which is also what stops sorted items being picked again.
-#   sorted_areas   free table space the robot may build piles in. It decides how many
-#                  piles, where, and how big, after looking at the unsorted zone.
-#                  Piles are packed along each area's long side.
+#   unsorted_zone: auto   on the first look the robot finds everything in `search_region` and
+#                         draws the zone around it (+ zone_margin). It is then fixed for the
+#                         run: only items inside it are picked, so sorted items never are.
+#                         Or pin it:  unsorted_zone: {x: [180, 480], y: [-150, 150]}
+#   sorted_areas: auto    the free table around that zone: strips between it and the limit on
+#                         the open side, plus `front` (beyond the zone, further from the arm).
+#                         Each is cut short so its far corner stays within max_reach.
+#                         Or pin them like:  sorted_areas: {near: {x: [200, 560], y: [-310, -190]}}
+#                         Areas taught with scripts/01_teach_pose.py --area override both.
 #
-# The arm sits at the far edge of the table on its -y side, so all the open table is
-# toward +y (the side move_arm.py PLACES on, out to the side wall at y=500). Both sorted
-# areas are strips on that side: `near` beside the unsorted zone, `far` beyond it and
-# shorter in x so its outer corner stays within reach. They stop at y=440 to keep the
-# gripper clear of the wall.
-#
-# THESE ARE UNTESTED GUESSES. Check the arm reaches their far corners top-down, then
-# re-teach:  python scripts/01_teach_pose.py --area near   (run at two opposite corners)
+# The arm sits near the table's +y edge (measured: the table ends ~220-265 mm from the arm on
+# that side), so the open table is toward -y - "to the right" when you stand behind the arm.
 # Startup fails if an area overlaps the unsorted zone, another area, or the bounds.
-unsorted_zone:
-  x: [230, 520]
-  y: [-150, 150]
+unsorted_zone: auto
+sorted_areas: auto
 
-sorted_areas:
-  near:
-    x: [200, 560]
-    y: [190, 310]
-  far:
-    x: [200, 480]
-    y: [330, 440]
+# Where the starting pile may be. Leaves at least one strip of table free on the open side.
+search_region:
+  x: [170, 600]
+  y: [-300, 180]
+zone_margin: 50
+
+sorted_layout:
+  open_side: "-y"
+  gap: 40            # clear table between the unsorted zone and the first strip
+  strip_depth: 120   # minimum depth of a strip; the free space is split into as many as fit
+  strip_gap: 20      # between strips
+  x: [200, 560]
+  front_x_max: 620   # how far from the arm the `front` area (beyond the zone) may extend
+  max_reach: 650     # mm from the arm base to an area's far corner (top-down reach, untested)
 
 piles:
   slot_gap: 15       # clearance added to a class's largest item -> that pile's slot spacing
@@ -64,6 +72,8 @@ segmentation:
   min_height: 8        # mm above table to count as an object
   min_area_px: 300
   top_band: 10         # mm below the object's top used for centroid / footprint
+  color_delta: 22      # how different (LAB) from the table's own color a blob must look to count...
+  tall_height: 40      # ...unless it stands this tall: clear of depth noise even if table-colored
   max_object_dim: 150  # larger segments are depth noise or table edges, not an item (as move_arm.py)
 
 gripper:
@@ -84,4 +94,8 @@ pick:
   # The xArm driver ignores the motion service's speed, so the final run-in onto an object
   # is slowed by setting the arm's own joint speed, then restored (values from move_arm.py).
   grasp_speed: 8       # deg/s during the descent and grab
+  # How often to take a new picture: once | when_needed | every_pick (see run_sort). Each one
+  # is a camera download, which can take ~30 s on a slow link. --look on the CLI overrides it.
+  look: when_needed
+  disturb_clearance: 30  # when_needed: a neighbour closer than this (edge to edge) triggers a new picture
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan
