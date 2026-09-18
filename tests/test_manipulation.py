@@ -70,7 +70,7 @@ class FakeMotion:
     def __init__(self, fail_linear=False):
         self.calls, self.fail_linear = [], fail_linear
 
-    async def move(self, component_name, destination, constraints=None, timeout=None):
+    async def move(self, component_name, destination, world_state=None, constraints=None, timeout=None):
         if constraints is not None and self.fail_linear:
             raise RuntimeError("no path")
         p = destination.pose
@@ -200,3 +200,22 @@ async def test_reset_returns_to_the_survey_pose_and_open_gripper_releases(worksp
     assert round(motion.calls[-1][2]) == 197 and round(motion.calls[-1][4]) == 616  # the survey pose
     assert await service.do_command({"action": "open-gripper"}) == {"success": True}
     assert gripper.events == ["open"]
+
+
+async def test_moves_are_sent_in_the_configured_frame_with_the_real_walls(workspace):
+    """The machine's `world` was recalibrated: poses go out in the arm's base frame, and the planner gets the walls with them."""
+    seen = []
+
+    class Motion(FakeMotion):
+        async def move(self, component_name, destination, world_state=None, constraints=None, timeout=None):
+            seen.append(world_state)
+            return await super().move(component_name, destination, world_state, constraints, timeout)
+
+    motion = Motion()
+    cfg = {"move_frame": "gripper", "rpc_timeout_s": 5, "reference_frame": "arm_origin"}
+    m = Manipulator(None, FakeGripper(), motion, cfg, workspace, load_yaml("poses.yaml"))
+    await m.move_to(300, 0, 200)
+    assert motion.calls[0][1] == "arm_origin"
+    walls = seen[0].obstacles[0]
+    assert walls.reference_frame == "arm_origin"
+    assert {g.label for g in walls.geometries} == {"real-wall-front", "real-wall-side"}

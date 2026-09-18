@@ -24,7 +24,7 @@ class SimRobot:
         self.manip = Manipulator(self, self, self, machine, workspace, load_yaml("poses.yaml"))
 
     # motion service
-    async def move(self, component_name, destination, constraints=None, timeout=None):
+    async def move(self, component_name, destination, world_state=None, constraints=None, timeout=None):
         self.xy = (destination.pose.x, destination.pose.y)
         return True
 
