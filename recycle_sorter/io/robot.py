@@ -147,6 +147,10 @@ class LiveRobot:
             log.warning("depth %s != color %s: enable align_color_depth on the camera", depth.shape, color.shape[:2])
             depth = cv2.resize(depth, (color.shape[1], color.shape[0]), interpolation=cv2.INTER_NEAREST)
 
+        scale = self.cfg.get("depth_scale", 1.0)
+        if scale != 1.0:  # this camera measures long (machine.yaml: depth_scale); saved frames carry the corrected depth
+            depth = np.round(depth * scale).astype(np.uint16)
+
         joints = await self.manip.arm.get_joint_positions()  # read-only: recorded with the frame
         return Frame(
             color=color,

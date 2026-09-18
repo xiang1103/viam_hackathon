@@ -174,7 +174,8 @@ async def test_named_pose_goes_through_the_planner_with_its_full_orientation(wor
     await m.goto_named("home")  # untaught -> falls back to survey
     assert len(motion.calls) == 2 and motion.calls[0] == motion.calls[1]
     _, frame, x, _, z, o_z, _ = motion.calls[0]
-    assert frame == "world" and round(x) == 197 and round(z) == 616 and round(o_z, 2) == -0.93
+    survey = load_yaml("poses.yaml")["named"]["survey"]  # taught at the table, so not a number to pin here
+    assert frame == "world" and (x, z, o_z) == (survey["x"], survey["z"], survey["o_z"])
 
 
 async def test_service_do_command_matches_original_actions(workspace):
@@ -197,7 +198,8 @@ async def test_reset_returns_to_the_survey_pose_and_open_gripper_releases(worksp
     service = MyGenericService("test")
     service.manip = live_manipulator(workspace, motion, gripper)
     assert await service.do_command({"action": "reset"}) == {"success": True}
-    assert round(motion.calls[-1][2]) == 197 and round(motion.calls[-1][4]) == 616  # the survey pose
+    survey = load_yaml("poses.yaml")["named"]["survey"]
+    assert (motion.calls[-1][2], motion.calls[-1][4]) == (survey["x"], survey["z"])
     assert await service.do_command({"action": "open-gripper"}) == {"success": True}
     assert gripper.events == ["open"]
 

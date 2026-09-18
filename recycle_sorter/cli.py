@@ -20,6 +20,10 @@ async def main() -> None:
                     help="take the first look (survey, and scan if the mode has one), report what was found, pick nothing")
     ap.add_argument("--look", choices=["once", "when_needed", "every_pick"],
                     help="how often to take a new picture (default: pick.look in workspace.yaml)")
+    ap.add_argument("--want", nargs="+", metavar="CLASS[=N]",
+                    help="fetch an order instead of sorting everything: e.g. --want coke=2 sparkling_water")
+    ap.add_argument("--order", metavar="TEXT",
+                    help='the same, in words: --order "2 cokes and a sparkling water" (llm/parse_order.py, needs Ollama)')
     ap.add_argument("--replay", type=Path, metavar="DIR", help="run perception over saved frames; no robot")
     ap.add_argument(
         "--action",
@@ -42,11 +46,26 @@ async def main() -> None:
         print("Result:", await run_local({"action": args.action}, dry_run=args.dry_run, step=args.step))
         return
 
+    wanted = None
+    if args.want:
+        wanted = {name: int(n or 1) for name, _, n in (w.partition("=") for w in args.want)}
+    elif args.order:
+        from dotenv import load_dotenv
+
+        load_dotenv()  # OLLAMA_URL, before the parser reads it
+        from llm.parse_order import parse_order
+
+        order = parse_order(args.order)
+        wanted = dict(order.items)
+        print("order:", wanted, "| not available:", order.not_supported)
+        if not wanted:
+            return
+
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
     try:
         # In dry-run nothing moves, so one picture gives the whole plan.
-        counts = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look, look_only=args.look_only)
-        print("sorted:", dict(counts))
+        counts = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look, look_only=args.look_only, wanted=wanted)
+        print("fetched:" if wanted else "sorted:", dict(counts))
     except (KeyboardInterrupt, asyncio.CancelledError):
         await robot.manip.stop()
         await robot.machine.stop_all()

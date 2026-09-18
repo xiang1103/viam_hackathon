@@ -49,6 +49,12 @@ move_frame: gripper
 # here was measured from the arm's base - which is also what reach is measured from.
 reference_frame: arm_origin
 
+# Every depth reading is multiplied by this. Measured 2026-09-18 on four frames from two camera poses: the
+# camera saw the table 38-49 mm BELOW where the arm knows it is (z = 0) and can tops 127-129 mm high (a can
+# is 122). Readings ~6 % too long explain both, and with the tilted camera they pushed every can ~20 mm away
+# from the camera - the gripper came down to the right of the can. 1.0 = trust the camera.
+depth_scale: 0.94
+
 # false = trust grab()'s return value (what move_arm.py does on this UFactory gripper);
 # true = ask gripper.is_holding_something() instead.
 trust_is_holding: false

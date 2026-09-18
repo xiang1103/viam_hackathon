@@ -98,6 +98,26 @@ class YoloDetector:
         return boxes
 
 
+def _own_top(blob: np.ndarray, height: np.ndarray, top_band: float) -> np.ndarray:
+    """Drop a neighbour's top from a blob, so the footprint is this item's alone.
+
+    Seen from a tilted camera, the lid of the can behind touches this can's lid in the
+    picture, and the blob inside the box then holds both: a "can" 124 mm long. Tops are
+    separate surfaces joined only by a thin neck of pixels, so eroding splits them; the
+    largest piece is the item the box was drawn around.
+    """
+    top = blob & (height > np.percentile(height[blob], 95) - top_band)
+    kernel = np.ones((5, 5), np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.erode(top.astype(np.uint8), kernel), connectivity=8)
+    if n < 2:
+        return blob
+    own = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    # Everything at top height that is not part of (or right next to) the item's own top goes:
+    # the neighbour's lid, and the few stray pixels of it that erosion wiped out altogether.
+    near_own = cv2.dilate((labels == own).astype(np.uint8), kernel, iterations=2).astype(bool)
+    return blob & ~(top & ~near_own)
+
+
 def observations_from_boxes(boxes: list[Box], frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
     """Turn 2D detections into the 3D objects the rest of the pipeline works with.
 
@@ -125,7 +145,7 @@ def observations_from_boxes(boxes: list[Box], frame: Frame, workspace: dict[str,
         middle = np.array([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2])
         big = [i for i in range(1, n) if stats[i][4] >= seg["min_area_px"]] or list(range(1, n))
         best = min(big, key=lambda i: np.linalg.norm(centroids[i] - middle))
-        m = labels == best
+        m = _own_top(labels == best, height, seg["top_band"])
         o = observe(pts[m], frame, workspace, mask=m, source_label=b.label)
         if o is None:
             continue

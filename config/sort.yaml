@@ -8,6 +8,17 @@ modes:
     min_confidence: 0.6
     groups: {}
 
+  # Cans and bottles, read off their labels by the team's LOCAL reader (llm/classify_image.py): free, no
+  # API key. Needs Ollama running with the vision model pulled - on this laptop, or on a teammate's with
+  # OLLAMA_URL=http://<their-ip>:11434 in .env. The piles are the categories in llm/categories.py;
+  # the photos in reference_pics/ are sent along as examples.
+  label:
+    classifier: local_vlm
+    min_confidence: 0.6      # the reader's high = 0.9, medium = 0.7, low = 0.4 -> low goes to reject
+    crop_pad: 0.08           # each box grown by this per side, and ...
+    min_crop_side: 640       # ... enlarged to at least this, before it is sent (as scan_drinks.py does)
+    groups: {}
+
   # Cans and bottles, read off their labels by Claude. Needs ANTHROPIC_API_KEY in .env.
   brand:
     classifier: claude_brand
