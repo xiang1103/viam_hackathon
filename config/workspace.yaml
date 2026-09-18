@@ -1,0 +1,36 @@
+# All values world frame (origin = arm base), millimeters.
+
+# Height of the table SURFACE. Measure it: scripts/03_record_frames.py --table
+# prints the median world z of a bare table. Do not trust the fragment's -123
+# until measured (it may be the obstacle box center, not its top).
+table_top: -123.0
+
+# Hard limits for any commanded gripper target. Targets outside are rejected
+# before they reach the planner. Walls are at x=740 and y=500.
+bounds:
+  x: [150, 700]
+  y: [-460, 460]
+  z_min_above_table: 5
+  z_max: 600
+
+# Where the unsorted pile lives. Points outside are ignored by segmentation,
+# which also keeps the sorted piles from being re-picked.
+pile_roi:
+  x: [250, 550]
+  y: [-150, 150]
+
+segmentation:
+  min_height: 8        # mm above table to count as an object
+  min_area_px: 300
+  top_band: 10         # mm below the object's top used for centroid / footprint
+
+gripper:
+  max_open: 80         # mm - measure on day 1; objects wider than this are skipped
+  finger_depth: 25     # how far below the object's top the fingertips go
+  yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
+
+pick:
+  pregrasp_above: 100
+  lift: 150
+  place_above: 120     # release height above table at the bin
+  line_tolerance_mm: 2

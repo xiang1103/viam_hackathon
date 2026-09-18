@@ -1,0 +1,17 @@
+# Resource names on the Viam machine. Run scripts/00_discover.py to confirm.
+arm: arm
+gripper: gripper
+camera: null        # null = auto-pick the only camera found
+motion: builtin
+
+# Which frame motion.move() drives. "gripper" = destination is the fingertip (TCP)
+# pose, if the gripper frame carries the TCP offset. Settle this with 02_hover_test.
+move_frame: gripper
+
+# Sent as arm.do_command({"set_speed": ...}) on connect (UFactory). Keep low on day 1.
+# false = trust grab()'s return value; true = ask gripper.is_holding_something()
+# (only reliable on some grippers - test it with and without an object first).
+trust_is_holding: false
+
+arm_speed: 25
+rpc_timeout_s: 30

@@ -1,0 +1,29 @@
+[project]
+name = "recycle-sorter"
+version = "0.1.0"
+description = "Viam hackathon: robot arm that sorts a pile by color, shape, material, and brand"
+requires-python = ">=3.10"
+dependencies = [
+    "viam-sdk>=0.80.0",
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "pyyaml",
+    "python-dotenv",
+    "pydantic",
+    "anthropic",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["recycle_sorter*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

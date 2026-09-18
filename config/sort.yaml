@@ -1,0 +1,25 @@
+# label -> bin name, per mode. Bin poses live in poses.yaml (scripts/01_teach_pose.py --bin NAME).
+# Any label not listed goes to `unknown_bin`.
+unknown_bin: reject
+
+modes:
+  color:
+    red: bin_a
+    orange: bin_a
+    yellow: bin_b
+    green: bin_b
+    blue: bin_c
+    purple: bin_c
+
+# HSV color classifier. Hues in degrees (0-360).
+colors:
+  hues:
+    red: 0
+    orange: 25
+    yellow: 55
+    green: 120
+    blue: 220
+    purple: 285
+  # Below these the pixel is treated as achromatic (black / grey / white by brightness).
+  min_saturation: 60   # 0-255
+  min_value: 50        # 0-255
