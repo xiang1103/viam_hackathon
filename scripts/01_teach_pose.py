@@ -2,7 +2,8 @@
 
     python scripts/01_teach_pose.py home          # joint pose
     python scripts/01_teach_pose.py survey        # joint pose: camera top-down, ~400 mm above the pile
-    python scripts/01_teach_pose.py --pile pile_1 # center of a sorted pile, from the gripper's current x/y
+    python scripts/01_teach_pose.py --area left   # run at two opposite corners of free table space:
+                                                  # the rectangle between them becomes a sorted area
 """
 import argparse
 import asyncio
@@ -17,20 +18,28 @@ from recycle_sorter.io.robot import connect
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("name", nargs="?", help="joint pose name, e.g. home or survey")
-    ap.add_argument("--pile", help="record the current gripper x/y as the center of this sorted pile")
+    ap.add_argument("--area", help="record the gripper x/y as a corner of this sorted area (needs two corners)")
     args = ap.parse_args()
-    if bool(args.name) == bool(args.pile):
-        ap.error("give either a pose name or --pile NAME")
+    if bool(args.name) == bool(args.area):
+        ap.error("give either a pose name or --area NAME")
 
     cfg = load_yaml("machine.yaml")
     poses = load_yaml("poses.yaml")
     machine = await connect()
     try:
-        if args.pile:
+        if args.area:
             motion = MotionClient.from_robot(machine, cfg["motion"])
             p = (await motion.get_pose(cfg["move_frame"], "world")).pose
-            poses.setdefault("piles", {})[args.pile] = {"x": round(p.x, 1), "y": round(p.y, 1)}
-            print(f"pile {args.pile}: x={p.x:.1f} y={p.y:.1f}  ({cfg['move_frame']} frame in world)")
+            corners = poses.setdefault("area_corners", {}).setdefault(args.area, [])
+            if len(corners) >= 2:
+                corners.clear()  # a third call starts the area over
+            corners.append([round(p.x, 1), round(p.y, 1)])
+            if len(corners) == 2:
+                (x0, y0), (x1, y1) = corners
+                poses.setdefault("sorted_areas", {})[args.area] = {"x": sorted([x0, x1]), "y": sorted([y0, y1])}
+                print(f"area {args.area}: {poses['sorted_areas'][args.area]}")
+            else:
+                print(f"area {args.area}: corner 1 at ({p.x:.1f}, {p.y:.1f}) - now jog to the opposite corner and run again")
         else:
             joints = await Arm.from_robot(machine, cfg["arm"]).get_joint_positions()
             poses.setdefault("joints", {})[args.name] = [round(v, 3) for v in joints.values]

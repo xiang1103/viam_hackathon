@@ -5,17 +5,5 @@ static:
   pick: {x: 300, y: -150, frame_z: 75, theta: 0}
   place: {x: 300, y: 150, frame_z: 75, theta: 0}
 
-# Sorted pile centers, world frame mm. Each becomes a square zone of drop slots
-# (size / slot_pitch in workspace.yaml -> piles). The order here is the order auto
-# hands them out. THESE ARE UNTESTED GUESSES laid out either side of the unsorted
-# zone: jog the gripper over each real spot and re-teach with
-#   python scripts/01_teach_pose.py --pile pile_1
-piles:
-  pile_1: {x: 270, y: 280}
-  pile_2: {x: 450, y: 280}
-  pile_3: {x: 270, y: -280}
-  pile_4: {x: 450, y: -280}
-  reject: {x: 620, y: 0}
-
 # Added by scripts/01_teach_pose.py:
 #   joints: {home: [...], survey: [...]}

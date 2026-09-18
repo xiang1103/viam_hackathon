@@ -50,10 +50,13 @@ async def pick(m: Manipulator, obs: ObjectObservation) -> bool:
     return await pick_at(m, *grasp_pose(obs, m.workspace))
 
 
-async def place(m: Manipulator, x: float, y: float) -> None:
-    """Release just above the table at a pile slot (see policy/piles.py)."""
-    release_z = m.workspace["table_top"] + m.workspace["pick"]["place_above"]
-    await place_at(m, x, y, release_z)
+async def place(m: Manipulator, x: float, y: float, grasp_z: float) -> None:
+    """Set the item down at a pile slot (see policy/piles.py).
+
+    It was grasped with the fingertips at grasp_z while resting on the table, so
+    releasing just above that same height puts it back down instead of dropping it.
+    """
+    await place_at(m, x, y, grasp_z + m.workspace["pick"]["release_clearance"])
 
 
 async def static_cycle(m: Manipulator) -> bool:

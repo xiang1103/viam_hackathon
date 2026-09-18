@@ -41,7 +41,7 @@ async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     obs = segment(make_frame(SCENE[:1]), workspace)[0]
     m = dry_manipulator(workspace, {})
     assert await pick(m, obs)
-    await place(m, 300, 300)
+    await place(m, 300, 300, TABLE_TOP + 10)
     actions = [r.message.split("] ")[1].split(" to ")[0] for r in caplog.records]
     assert actions == [
         "open gripper", "move", "move linear", "grab", "move linear",  # pick
@@ -51,7 +51,7 @@ async def test_dry_run_pick_and_place_sequence(workspace, caplog):
 
 async def test_place_rejects_target_outside_workspace(workspace):
     with pytest.raises(UnsafeTarget):
-        await place(dry_manipulator(workspace, {}), 900, 0)
+        await place(dry_manipulator(workspace, {}), 900, 0, TABLE_TOP + 10)
 
 
 def test_frame_round_trips_through_recorder(tmp_path, workspace):

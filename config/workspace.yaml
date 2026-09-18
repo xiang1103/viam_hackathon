@@ -13,22 +13,35 @@ bounds:
   z_min_above_table: 5
   z_max: 600
 
-# ZONES. The table is split into one unsorted zone and several sorted piles.
+# ZONES. The table is split into one unsorted zone and the areas where piles may be made.
 #
 #   unsorted_zone  where you dump the mixed items. Only objects inside it are ever
 #                  picked, which is also what stops sorted items being picked again.
-#   piles          drop zones, centered on the points in poses.yaml -> piles. Each is
-#                  a size x size square holding a grid of slots slot_pitch apart
-#                  (160 / 70 -> 2x2 = 4 items before it starts stacking).
+#   sorted_areas   free table space the robot may build piles in. It decides how many
+#                  piles, where, and how big, after looking at the unsorted zone.
+#                  Piles are packed along each area's long side.
 #
-# Startup fails if a pile overlaps the unsorted zone or leaves the bounds.
+# THE AREAS BELOW ARE UNTESTED GUESSES either side of the unsorted zone. Make sure the
+# arm can reach their far corners top-down, then re-teach them:
+#   python scripts/01_teach_pose.py --area left     (run at two opposite corners)
+# Startup fails if an area overlaps the unsorted zone, another area, or the bounds.
 unsorted_zone:
   x: [230, 520]
   y: [-150, 150]
 
+sorted_areas:
+  left:
+    x: [200, 560]
+    y: [190, 370]
+  right:
+    x: [200, 560]
+    y: [-370, -190]
+
 piles:
-  size: 160
-  slot_pitch: 70
+  slot_gap: 15       # clearance added to a class's largest item -> that pile's slot spacing
+  min_pitch: 50      # never space slots tighter than this
+  spare_slots: 1     # extra slots per pile, for items hidden under others (piles can also grow later)
+  pile_gap: 30       # empty strip between neighbouring piles
 
 segmentation:
   min_height: 8        # mm above table to count as an object
@@ -50,5 +63,5 @@ gripper:
 pick:
   approach: 100        # standoff above the grasp / release height before descending
   lift: 150            # carry height above the grasp / release height
-  place_above: 40      # fingertip release height above the table at a pile
+  release_clearance: 5 # release this far above the height the item was grasped at, so it is set down, not dropped
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan

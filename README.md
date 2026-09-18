@@ -12,33 +12,34 @@ sorted piles. One pick-and-place loop; only the **classifier** changes per stage
 
 ```
 survey pose → RGB-D snapshot → segment (above table plane, inside the unsorted zone) → choose topmost
-  → classify → pile for that class → pick → place in that pile's next free slot → re-survey
+  → classify → pick → set down in that class's pile (created on demand) → re-survey
 ```
 
 ## Zones and piles
 
-```
-        pile_1   pile_2            Dump mixed items in the UNSORTED ZONE. Only things inside it
-       ┌──────┐ ┌──────┐           are ever picked, so sorted items are never picked again.
-       └──────┘ └──────┘
-      ┌─────────────────┐ ┌──────┐ Choose what to sort by with --mode. Each new class the robot
- arm  │  UNSORTED ZONE  │ │reject│ sees claims the next free pile by itself: sort red/blue/green
-      └─────────────────┘ └──────┘ blocks by color and three piles form. Low-confidence items, or
-       ┌──────┐ ┌──────┐           more classes than piles, go to reject.
-       └──────┘ └──────┘
-        pile_3   pile_4            A pile is a zone with a grid of slots, so items sit side by
-                                   side instead of being dropped on top of each other.
-```
+Nothing about the piles is fixed in advance — only where they are *allowed* to go.
 
-- **Add a pile:** jog the gripper over the spot → `python scripts/01_teach_pose.py --pile pile_5`.
-- **Pin classes instead of auto:** `map: {red: pile_1, orange: pile_1}` in [config/sort.yaml](config/sort.yaml).
-- **Resize:** `unsorted_zone` and `piles.size` / `slot_pitch` in [config/workspace.yaml](config/workspace.yaml).
-  Startup refuses to run if a pile overlaps the unsorted zone or leaves the safety bounds.
-- The zone is drawn in magenta on every `data/debug/*.png`, so you can see it against the real table.
+1. **Assess.** From the survey pose, find and classify everything in the **unsorted zone**
+   → e.g. `{red: 2, blue: 2, green: 1, grey: 1}` plus the largest item in each class.
+2. **Plan.** Create one pile per class inside the **sorted areas** (free table space you define):
+   slot count from how many were seen, slot spacing from how big they are. A **reject** pile is
+   always reserved first, for low-confidence items and classes that don't fit.
+3. **Sort.** Pick topmost → set it down in its pile's next slot → re-survey, until the zone is empty.
+   A heap hides things, so it stays dynamic: a class first seen mid-run gets a new pile from the
+   remaining space, and a pile that fills up grows an extension.
 
-The shipped pile positions are untested guesses — re-teach them at the table.
+Every run writes `data/debug/layout-plan.png` (the plan, before anything moves) and
+`data/debug/layout.png` (live: slots fill in as items land) — a top-down map of the table.
+`--dry-run` and `--replay` show the assessment and the plan without moving the arm.
 
-Full staged plan, milestones, and risks: [docs/PLAN.md](docs/PLAN.md).
+- **What to sort by:** `--mode` (one per classifier). **Merge classes into one pile:**
+  `groups: {warm: [red, orange, yellow]}` in [config/sort.yaml](config/sort.yaml).
+- **Where piles may go:** `sorted_areas` in [config/workspace.yaml](config/workspace.yaml) are untested
+  guesses. Teach real ones by jogging the gripper to two opposite corners of free table space and
+  running `python scripts/01_teach_pose.py --area left` at each. Taught areas override the guesses.
+- **Spacing:** `piles.slot_gap`, `spare_slots`, `pile_gap` in `workspace.yaml`.
+- Startup refuses to run if a sorted area overlaps the unsorted zone, another area, or the safety
+  bounds. Only objects inside the unsorted zone are ever picked, so sorted items are never re-picked.
 
 ## Setup
 
@@ -57,8 +58,8 @@ cp .env.example .env    # fill in from the Viam app: machine → CONNECT → API
 | 2 | Jog in the Viam app, then `python scripts/01_teach_pose.py home` and `... survey` | no | `survey` = camera pointing straight down, ~400 mm above the pile (RealSense can't see closer than ~280 mm). |
 | 3 | Clear the table, go to survey, `python scripts/03_record_frames.py --table` | no | Prints the measured `table_top` → put it in `config/workspace.yaml`. |
 | 4 | One block on the table: `python scripts/02_hover_test.py` | **yes**, Enter per move | **Gate: gripper hovers within 15 mm of the block in x/y, and fingertips sit `--hover` (60) mm above its top.** A height error goes into `gripper.tcp_offset`; finger rotation into `yaw_offset_deg`. If it fails, fix the camera frame / `move_frame` before anything else. |
-| 5 | Jog over each pile spot: `python scripts/01_teach_pose.py --pile pile_1` (… `pile_4`, `reject`) | no | Replaces the guessed pile centers with reachable ones. Check the magenta unsorted zone in `data/debug/` covers where you dump items. |
-| 6 | `python -m recycle_sorter.cli --mode color --dry-run` | no | Full plan logged, nothing moves. Check `data/debug/*.png`. |
+| 5 | Jog to two opposite corners of free table space, running `python scripts/01_teach_pose.py --area left` at each (repeat for `right`) | no | Replaces the guessed sorted areas with ones the arm can really reach. Check the magenta unsorted zone in `data/debug/` covers where you dump items. |
+| 6 | `python -m recycle_sorter.cli --mode color --dry-run` | no | Assessment + pile plan + first pick logged, nothing moves. Check `data/debug/layout-plan.png`. |
 | 7 | `python -m recycle_sorter.cli --mode color --step` | **yes**, Enter per move | First real sort. Drop `--step` once it behaves, then raise `arm_speed`. |
 
 Also measure the gripper's real max opening → `workspace.yaml` `gripper.max_open`. It decides
@@ -78,7 +79,7 @@ class MyColorClassifier:
 ```
 
 1. Return it from `make_classifier()` in [recycle_sorter/app.py](recycle_sorter/app.py) for your mode.
-2. Add the mode under `modes:` in [config/sort.yaml](config/sort.yaml). `auto: true` is enough — piles form from whatever labels you return.
+2. Add the mode under `modes:` in [config/sort.yaml](config/sort.yaml). That's all — piles are created from whatever labels you return.
 3. Test it offline: `python -m recycle_sorter.cli --mode <mode> --replay data/frames`.
 
 `classify/color_hsv.py` is a working baseline for the color gate — replace it, or keep it to compare against.
@@ -95,9 +96,9 @@ python -m recycle_sorter.cli --replay data/frames  # anywhere: perception + labe
 ## Config (everything tuned at the table lives here, not in code)
 
 - `config/machine.yaml` — resource names, `move_frame`, arm speed
-- `config/workspace.yaml` — `table_top`, safety bounds, pile ROI, gripper + pick parameters
-- `config/sort.yaml` — how classes become piles per mode (auto / pinned / min confidence), color hues
-- `config/poses.yaml` — static pick/place poses, pile centers, plus home / survey written by `01_teach_pose.py`
+- `config/workspace.yaml` — `table_top`, safety bounds, unsorted zone, sorted areas, gripper + pick parameters
+- `config/sort.yaml` — per mode: min confidence and class groups; color hues
+- `config/poses.yaml` — static pick/place poses, plus home / survey / sorted areas written by `01_teach_pose.py`
 
 Safety: every target is bounds-checked before it reaches the planner (`manipulation/safety.py`);
 Ctrl-C stops the arm; the workcell fragment's walls/table/ceiling are in every motion plan.
@@ -113,7 +114,8 @@ recycle_sorter/
   perception/  frames.py  segment.py  select.py
   classify/    base.py (Protocol)  color_hsv.py        ← one file per stage
   manipulation/ motion.py (bounds, tcp offset)  pickplace.py  safety.py
-  policy/      sort_policy.py (class → pile, auto-assign)  piles.py (zones, slots, validation)
+  policy/      sort_policy.py (class → pile key)  piles.py (creates + grows piles in the sorted areas)
+  viz.py       top-down table map
 ```
 
 ## Optional: drive the machine directly from Claude (MCP)

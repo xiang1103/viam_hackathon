@@ -1,21 +1,12 @@
-# How classes become piles. Pile locations live in poses.yaml -> piles.
+# What to sort by. Piles are not listed here: the robot creates one per class it finds
+# in the unsorted zone (see sorted_areas in workspace.yaml).
 #
-#   auto: true   every new label claims the next free pile, in poses.yaml order.
-#                Sort by color with red/blue/green blocks -> three piles form by themselves.
-#   map:         pin labels to piles. Labels can share one ("red" and "orange" -> pile_1).
-#                Pinned piles are not handed out by auto.
-#   min_confidence: below this the item goes to the reject pile instead of a guess.
-#
-# Anything left over (low confidence, or more classes than piles) goes to reject_pile.
-reject_pile: reject
-
+#   min_confidence  below this an item goes to the reject pile instead of being guessed at.
+#   groups          merge classes into one pile, e.g. {warm: [red, orange, yellow]}.
 modes:
   color:
-    auto: true
     min_confidence: 0.6
-    map: {}
-    # Example of pinning instead:
-    # map: {red: pile_1, orange: pile_1, blue: pile_2}
+    groups: {}
 
 # HSV color classifier. Hues in degrees (0-360).
 colors:
