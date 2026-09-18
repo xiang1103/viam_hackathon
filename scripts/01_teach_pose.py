@@ -28,7 +28,7 @@ async def main() -> None:
     try:
         if args.area:
             motion = MotionClient.from_robot(machine, cfg["motion"])
-            p = (await motion.get_pose(cfg["move_frame"], "world")).pose
+            p = (await motion.get_pose(cfg["move_frame"], cfg.get("reference_frame", "world"))).pose
             corners = poses.setdefault("area_corners", {}).setdefault(args.area, [])
             if len(corners) >= 2:
                 corners.clear()  # a third call starts the area over
@@ -41,7 +41,7 @@ async def main() -> None:
                 print(f"area {args.area}: corner 1 at ({p.x:.1f}, {p.y:.1f}) - now jog to the opposite corner and run again")
         else:
             motion = MotionClient.from_robot(machine, cfg["motion"])
-            p = (await motion.get_pose(cfg["move_frame"], "world")).pose
+            p = (await motion.get_pose(cfg["move_frame"], cfg.get("reference_frame", "world"))).pose
             fields = ("x", "y", "z", "o_x", "o_y", "o_z", "theta")
             poses.setdefault("named", {})[args.name] = {k: round(getattr(p, k), 4) for k in fields}
             print(f"pose {args.name}: {poses['named'][args.name]}")

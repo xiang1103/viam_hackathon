@@ -7,7 +7,7 @@ from typing import Any
 
 from viam.components.arm import Arm
 from viam.components.gripper import Gripper
-from viam.proto.common import Pose, PoseInFrame
+from viam.proto.common import GeometriesInFrame, Geometry, Pose, PoseInFrame, RectangularPrism, Vector3, WorldState
 from viam.proto.service.motion import Constraints, LinearConstraint
 from viam.services.motion import MotionClient
 
@@ -40,10 +40,26 @@ class Manipulator:
         self.arm, self.gripper, self.motion = arm, gripper, motion
         self.workspace, self.poses = workspace, poses
         self.move_frame = machine_cfg["move_frame"]
+        self.reference_frame = machine_cfg.get("reference_frame", "world")
+        self.world_state = self._world_state(workspace.get("obstacles") or [])
         self.timeout = machine_cfg["rpc_timeout_s"]
         self.trust_is_holding = machine_cfg.get("trust_is_holding", False)
         self.normal_speed = machine_cfg.get("arm_speed")
         self.dry_run, self.step = dry_run, step
+
+    def _world_state(self, obstacles: list[dict[str, Any]]) -> WorldState | None:
+        """Extra obstacles for the planner (workspace.yaml `obstacles`), boxes in the reference frame."""
+        if not obstacles:
+            return None
+        boxes = [
+            Geometry(
+                center=Pose(x=o["center"][0], y=o["center"][1], z=o["center"][2], o_z=1),
+                box=RectangularPrism(dims_mm=Vector3(x=o["size"][0], y=o["size"][1], z=o["size"][2])),
+                label=o["name"],
+            )
+            for o in obstacles
+        ]
+        return WorldState(obstacles=[GeometriesInFrame(reference_frame=self.reference_frame, geometries=boxes)])
 
     async def _confirm(self, what: str) -> None:
         log.info("%s%s", "[dry-run] " if self.dry_run else "", what)
@@ -51,18 +67,18 @@ class Manipulator:
             await asyncio.to_thread(input, f"  ENTER to: {what} (Ctrl-C aborts) ")
 
     async def _move(self, pose: Pose, linear: bool = False) -> None:
-        dest = PoseInFrame(reference_frame="world", pose=pose)
+        dest = PoseInFrame(reference_frame=self.reference_frame, pose=pose)
         if linear:
             tol = self.workspace["pick"]["line_tolerance_mm"]
             constraints = Constraints(linear_constraint=[LinearConstraint(line_tolerance_mm=tol)])
             try:
-                if await self.motion.move(self.move_frame, dest, constraints=constraints, timeout=self.timeout):
+                if await self.motion.move(self.move_frame, dest, world_state=self.world_state, constraints=constraints, timeout=self.timeout):
                     return
             except Exception as e:
                 # A failed plan has not moved the arm, so an unconstrained retry
                 # is safe. Free plans are what move_arm.py proved on hardware.
                 log.warning("linear plan failed (%s); retrying unconstrained", e)
-        if not await self.motion.move(self.move_frame, dest, timeout=self.timeout):
+        if not await self.motion.move(self.move_frame, dest, world_state=self.world_state, timeout=self.timeout):
             raise RuntimeError("motion.move returned False")
 
     async def move_to(self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False) -> None:

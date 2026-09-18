@@ -43,6 +43,11 @@ vision:
 # The frame motion.move() drives. Its origin is NOT the fingertips: see
 # gripper.tcp_offset in workspace.yaml.
 move_frame: gripper
+# The frame every pose, bound and table number in config/ is expressed in, and that the camera's
+# points are converted to. `arm_origin` = the arm's own base. Not `world`: on 2026-09-18 the machine's
+# world frame was recalibrated (arm now sits at (-65, 35, 26) turned -90.8 deg in it), and everything
+# here was measured from the arm's base - which is also what reach is measured from.
+reference_frame: arm_origin
 
 # false = trust grab()'s return value (what move_arm.py does on this UFactory gripper);
 # true = ask gripper.is_holding_something() instead.

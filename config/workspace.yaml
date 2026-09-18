@@ -28,6 +28,13 @@ bounds:
 # (arm at bottom, +y on your left).
 map_view: behind
 
+# The workcell's real walls, given to the motion planner with every move (boxes: center and size in mm,
+# in machine.yaml's reference_frame). The machine config has the same walls, but in the `world` frame,
+# which was recalibrated on 2026-09-18 and turned them ~90 degrees away from where they really stand.
+obstacles:
+  - {name: real-wall-front, center: [750, 0, 300], size: [20, 2000, 1500]}   # behind the cans, face at x = 740
+  - {name: real-wall-side, center: [0, 510, 300], size: [2000, 20, 1500]}    # face at y = 500
+
 # ZONES. One unsorted zone (the starting pile) and the areas where sorted piles may be made.
 # Both can be `auto`, so the starting pile can be any size, anywhere in the search region:
 #

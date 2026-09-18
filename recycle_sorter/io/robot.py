@@ -107,7 +107,7 @@ class LiveRobot:
             reference_frame="sorter_probe",
             pose_in_observer_frame=PoseInFrame(reference_frame=self.camera_name, pose=Pose(x=x, y=y, z=z, o_z=1)),
         )
-        p = (await self.manip.motion.get_pose("sorter_probe", "world", [probe], timeout=self.cfg["rpc_timeout_s"])).pose
+        p = (await self.manip.motion.get_pose("sorter_probe", self.manip.reference_frame, [probe], timeout=self.cfg["rpc_timeout_s"])).pose
         return p.x, p.y, p.z
 
     async def _get_images(self):
