@@ -52,3 +52,46 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 - Safe to run (no motion): `.venv/bin/python -m pytest -q`, and `python -m recycle_sorter.cli --replay <frames dir>`.
 - These **move the arm**: `python -m recycle_sorter.cli` (without `--dry-run` / `--replay`), `scripts/02_hover_test.py`. Use `--step` on first runs.
 - Everything tuned at the table lives in `config/*.yaml`, not in code.
+
+## Drink order pipeline (`pipeline.py`, `llm/`)
+
+A typed order such as "2 cokes and a sparkling water" goes in. Out comes JSON naming which detected cans to pick, by YOLO box index.
+It runs entirely on this laptop through Ollama, so it needs no API key. It does not move the arm yet.
+
+- Flow, one fresh picture per command:
+  1. `llm/parse_order.py` (`qwen2.5:1.5b`) turns the text into `{category: count}` plus a list of `not_supported` items.
+  2. The picture comes from the camera (`--camera`) or from a file (`--image`).
+  3. `detect_cans.py` (YOLOE) draws numbered boxes.
+  4. `scan_drinks.py: scan()` crops each box (8% padding, enlarged to 640 px), and `llm/classify_image.py` (`qwen2.5vl:7b`) labels each crop.
+  5. `pipeline.py: choose()` picks the most confident matches for each category. `low` confidence items are never picked. A shortfall goes to `missing`.
+- Run it:
+  - `python pipeline.py --camera` prompts for commands.
+  - `python pipeline.py --image pic.jpg "2 cokes"` runs one command and exits.
+  - `python scan_drinks.py --camera|<pic>` runs only the image half.
+  - `python -m llm.parse_order` runs only the text half.
+- Needs `ollama serve` running, with `qwen2.5:1.5b` and `qwen2.5vl:7b` pulled.
+  - Override the models with the `ORDER_MODEL` and `VISION_MODEL` environment variables.
+  - The 7B model needs about 7 GB of memory.
+- **Categories are shared.** They live only in `llm/categories.py`, and both models read them from there:
+  - `CATEGORIES`: each category has an `order` description (for the parser) and a `visual` description (for the VLM).
+  - `BRAND_KEYWORDS`: ordered, first match wins, whole words only.
+  - The current categories are `coke`, `diet_coke`, `water`, `sparkling_water`, `energy_drink`, `coconut_water`, `general_soda`, and `not_supported`.
+  - To add a product, edit only this file.
+- Small models are wrong more often about labels than about words. So after the model answers, a brand keyword in the request text, or in the VLM's `visible_text`, overrides the model's label.
+  - The plain "Coca-Cola" logo does not override a `diet_coke` answer.
+  - Avoid generic keywords that other drinks share, such as `cola` or `zero sugar` alone.
+- The VLM answers `regular_coke` internally, and the code maps it back to `coke`. Under the strict schema the model confused `coke` with `coconut_water`, so don't rename it back.
+- `reference_pics/` is tracked in git. Every photo in it is sent with each crop, labelled with its category.
+  - The category comes from the file or folder name. That is either a category name (`coke.JPG`) or a brand that `BRAND_KEYWORDS` knows (`canada_dry/` → `general_soda`).
+  - `num_ctx` grows with the number of photos, about 1200 tokens per image. Ollama's default of 4096 fails with even a few photos.
+- Output: each command writes `data/scans/<timestamp>/`, which is git-ignored. It holds `picture.jpg`, `detected.jpg`, `crops/NN.jpg`, `results.json`, and `order.json`.
+  - With `--camera`, the depth frame is also saved to `data/frames/`, for the 3D grasp later.
+- Safe to run, because it never moves the arm: `pipeline.py`, `scan_drinks.py`, and `detect_cans.py`.
+  - With `--camera` they connect through `LiveRobot.create(dry_run=True)`, which skips every motion call, including `set_speed`.
+- Timing on this laptop, measured 2026-09-18:
+  - Parsing the order takes about 2.5 s, and YOLO about 0.2 s.
+  - The VLM takes about 10 s per crop. The first crop after the model loads takes about 55 s, because it has to process the reference photos.
+- Known weakness: the survey crops are about 100 px, taken from above, and blurry.
+  - The VLM sometimes invents label text, confuses Diet Coke with Coke, and confuses Canada Dry with other drinks.
+  - On the 2026-09-18 table it got about 8 of 10 cans right.
+  - Planned fixes: close-up verification at the approach pose before each grasp, and top-down reference photos.
