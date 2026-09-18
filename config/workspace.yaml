@@ -64,6 +64,8 @@ segmentation:
   min_height: 8        # mm above table to count as an object
   min_area_px: 300
   top_band: 10         # mm below the object's top used for centroid / footprint
+  color_delta: 22      # how different (LAB) from the table's own color a blob must look to count...
+  tall_height: 40      # ...unless it stands this tall: clear of depth noise even if table-colored
   max_object_dim: 150  # larger segments are depth noise or table edges, not an item (as move_arm.py)
 
 gripper:

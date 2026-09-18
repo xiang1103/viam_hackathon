@@ -21,7 +21,7 @@ survey pose → RGB-D snapshot → find the objects (inside the unsorted zone) �
 inside the unsorted zone is an object; its color is read afterwards with HSV. It is class-agnostic, which
 is what "assess the zone, then create piles to fit" needs: whatever colors turn up get piles, including
 black / white / grey, with nothing to configure per color (hues live in [config/sort.yaml](config/sort.yaml)).
-Needs the RealSense color and depth streams **aligned** (same resolution; `align_color_depth: true`) — step 1 checks it.
+Needs the RealSense depth **aligned** to color — see *Camera alignment* below; step 3 checks it.
 
 **`viam`.** Viam vision services (`get_object_point_clouds`), as `move_arm.py` does. A color detector +
 segmenter only reports its **one** target color, so it needs one service per class (`vision.segmenters`:
@@ -31,6 +31,29 @@ with a trained ML detector that names what it finds, set `use_detection_label: t
 Both paths build objects through the same code, so size, **top height** and grasp angle are computed from
 the object's points — not from a box center, which sits too low on tall items (why `move_arm.py`
 hard-codes `OBJECT_HEIGHT_MM`).
+
+### Camera alignment (required for `depth`)
+
+The RealSense's depth sensor has a wider lens (~87°) than its color sensor (~70°). By default the two
+images are the same *size* but **not aligned**, and Viam only reports the color lens. Unaligned, 3D
+positions come out distorted (the table looks tilted ~8°) and colors are read from the wrong pixels.
+Measured on this machine on 2026-09-18: tilt 7.8° → 0.5° once the right lens is assumed.
+
+Fix — one attribute on the camera. In the Viam app, add to the `fragment_mods` of the arm/camera fragment
+(next to the existing `use_urdfs` mod):
+
+```json
+{ "$set": { "components.cam.attributes.align_color_depth": true } }
+```
+
+It only changes the depth image returned by `GetImages`; the camera's point cloud (what `move_arm.py`'s
+vision service uses) is already aligned, so that pipeline is unaffected. If the white table gives noisy
+depth, `"depth_visual_preset": "high_accuracy"` on the same camera may help.
+
+Two safeguards are built in regardless: heights are measured relative to the table *as seen in each frame*
+(so a calibration a few cm or degrees off still works, and grasp heights stay in the arm's coordinates),
+and a blob must also look different from the table, or be over 40 mm tall, to count as an object — a plain
+white table produces depth-noise bumps as tall as a block.
 
 ## Zones and piles
 
@@ -73,9 +96,9 @@ cp .env.example .env    # fill in from the Viam app: machine → CONNECT → API
 | # | Command | Moves arm? | What you learn / must pass |
 |---|---|---|---|
 | 0 | `python -m recycle_sorter.cli --action static-cycle --step` | **yes**, Enter per move | Blind pick→place between `move_arm.py`'s two fixed poses, but through this package. Proves our motion layer matches theirs before any vision. |
-| 1 | `python scripts/00_discover.py` | no | Resource names, frame tree, camera streams, and what each vision service in `machine.yaml` sees. **Color and depth streams must be the same resolution** — if not, set `align_color_depth: true` on the RealSense, or colors get read from the wrong pixels. |
+| 1 | `python scripts/00_discover.py` | no | Resource names, frame tree, camera streams, and what each vision service in `machine.yaml` sees. |
 | 2 | *(optional)* Jog in the Viam app, then `python scripts/01_teach_pose.py survey` / `home` | no | `survey` ships as `move_arm.py`'s proven `WATCH_POSE`, so only re-teach it if the magenta unsorted zone isn't fully in view. |
-| 3 | Clear the table, go to survey, `python scripts/03_record_frames.py --table` | no | Prints the measured `table_top` (expected ≈ 0) → put it in `config/workspace.yaml`. |
+| 3 | Arm at survey, `python scripts/03_record_frames.py --table` | no | **Gate: must say `OK`.** Reports the table's tilt as the camera sees it. Several degrees = the depth image is not aligned to color (see *Camera alignment* below) and nothing downstream can work. |
 | 4 | One block on the table: `python scripts/02_hover_test.py` | **yes**, Enter per move | **Gate: gripper hovers within 15 mm of the block in x/y, and fingertips sit `--hover` (60) mm above its top.** A height error goes into `gripper.tcp_offset`; finger rotation into `yaw_offset_deg`. If it fails, fix the camera frame / `move_frame` before anything else. |
 | 5 | Jog to two opposite corners of free table space, running `python scripts/01_teach_pose.py --area left` at each (repeat for `right`) | no | Replaces the guessed sorted areas with ones the arm can really reach. Check the magenta unsorted zone in `data/debug/` covers where you dump items. |
 | 6 | `python -m recycle_sorter.cli --mode color --dry-run` | no | Assessment + pile plan + first pick logged, nothing moves. Check `data/debug/layout-plan.png`. |

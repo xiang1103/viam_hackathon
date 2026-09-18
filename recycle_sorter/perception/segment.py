@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import cv2
@@ -9,10 +10,67 @@ from ..types import Frame, ObjectObservation
 from .frames import world_points
 
 
-def table_height(frame: Frame) -> float:
-    """Median world z of everything in view. Use on a BARE table to measure table_top."""
+log = logging.getLogger(__name__)
+
+MISALIGNED_TILT_DEG = 3.0
+
+
+def fit_table(pts: np.ndarray, valid: np.ndarray, workspace: dict[str, Any]) -> tuple[np.ndarray, float] | None:
+    """Fit the table plane z = a*x + b*y + d to what the camera actually sees.
+
+    Returns ((a, b, d), tilt in degrees), or None when too little table is in view.
+    Trimmed least squares: objects and noise are rejected as outliers over a few rounds.
+    """
+    b = workspace["bounds"]
+    q = pts[::4, ::4][valid[::4, ::4]]
+    # Loose in z on purpose: the camera's calibration can be tens of mm off.
+    q = q[(q[:, 0] > b["x"][0]) & (q[:, 0] < b["x"][1]) & (q[:, 1] > b["y"][0]) & (q[:, 1] < b["y"][1])
+          & (np.abs(q[:, 2] - workspace["table_top"]) < 150)]
+    if len(q) < 500:
+        return None
+    for _ in range(6):
+        a = np.c_[q[:, 0], q[:, 1], np.ones(len(q))]
+        coef, *_ = np.linalg.lstsq(a, q[:, 2], rcond=None)
+        r = q[:, 2] - a @ coef
+        q = q[np.abs(r) < max(3.0, 1.5 * np.std(r))]
+        if len(q) < 500:
+            return None
+    return coef, float(np.degrees(np.arctan(np.hypot(coef[0], coef[1]))))
+
+
+def level(frame: Frame, workspace: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, float | None]:
+    """World points with z re-expressed as table_top + HEIGHT ABOVE THE TABLE SEEN IN THIS FRAME.
+
+    Heights relative to the fitted table survive a camera calibration that is a few cm
+    or degrees off, and keep grasp heights tied to the arm's own table_top rather than
+    to where the camera believes the table is. Returns (points, valid, tilt or None).
+    """
     pts, valid = world_points(frame)
-    return float(np.median(pts[..., 2][valid]))
+    fit = fit_table(pts, valid, workspace)
+    if fit is None:
+        return pts, valid, None
+    (a, b, d), tilt = fit
+    pts = pts.copy()
+    pts[..., 2] = workspace["table_top"] + (pts[..., 2] - (a * pts[..., 0] + b * pts[..., 1] + d)) * np.cos(np.radians(tilt))
+    if tilt > MISALIGNED_TILT_DEG:
+        log.warning(
+            "the table appears tilted %.1f deg. A RealSense whose depth is not aligned to color does this "
+            "(depth has a wider lens than the color intrinsics used here): set align_color_depth: true on "
+            "the camera. Positions and colors are unreliable until then.", tilt)
+    return pts, valid, tilt
+
+
+def table_report(frame: Frame, workspace: dict[str, Any]) -> str:
+    """For a BARE table: where the camera sees the table, and whether depth looks aligned."""
+    pts, valid = world_points(frame)
+    fit = fit_table(pts, valid, workspace)
+    if fit is None:
+        return "could not find the table in view"
+    (a, b, d), tilt = fit
+    u = workspace["unsorted_zone"]
+    cx, cy = sum(u["x"]) / 2, sum(u["y"]) / 2
+    verdict = "OK" if tilt <= MISALIGNED_TILT_DEG else "NOT OK - set align_color_depth: true on the camera"
+    return f"camera sees the table at z = {a * cx + b * cy + d:.1f} mm (zone center), tilt {tilt:.1f} deg: {verdict}"
 
 
 def project_mask(points: np.ndarray, frame: Frame) -> np.ndarray:
@@ -102,16 +160,28 @@ def finish(objects: list[ObjectObservation], workspace: dict[str, Any]) -> list[
 
 
 def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
-    """OpenCV fallback: objects are blobs standing above the table plane inside the unsorted zone."""
+    """OpenCV path: objects stand above the table inside the unsorted zone AND do not look like it.
+
+    Depth alone is not enough: on a plain white table the RealSense produces noise bumps
+    10-30 mm tall, the same height as a block. So a blob must also differ from the table's
+    own color, unless it is clearly taller than any noise (a white item on a white table).
+    """
     seg = workspace["segmentation"]
     roi = workspace["unsorted_zone"]
     table_top = workspace["table_top"]
 
-    pts, valid = world_points(frame)
-    x, y, z = pts[..., 0], pts[..., 1], pts[..., 2]
+    pts, valid, _ = level(frame, workspace)
+    x, y, height = pts[..., 0], pts[..., 1], pts[..., 2] - table_top
+
+    lab = cv2.cvtColor(frame.color, cv2.COLOR_BGR2LAB).astype(np.float32)
+    flat = valid & (np.abs(height) < 4.0)
+    table_color = np.median(lab[flat], axis=0) if flat.sum() > 100 else np.median(lab.reshape(-1, 3), axis=0)
+    unlike_table = np.linalg.norm(lab - table_color, axis=2) > seg["color_delta"]
+
     above = (
         valid
-        & (z > table_top + seg["min_height"])
+        & (height > seg["min_height"])
+        & (unlike_table | (height > seg["tall_height"]))
         & (x > roi["x"][0]) & (x < roi["x"][1])
         & (y > roi["y"][0]) & (y < roi["y"][1])
     )
