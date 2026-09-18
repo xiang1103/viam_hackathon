@@ -9,9 +9,15 @@ table_top: -123.0
 # before they reach the planner. Walls are at x=740 and y=500.
 bounds:
   x: [150, 700]
-  y: [-460, 460]
+  # -y is the table edge the arm sits at: -200 keeps the gripper over the table while still
+  # allowing move_arm.py's proven pick at y=-150. Measure the real edge and tighten if needed.
+  y: [-200, 460]
   z_min_above_table: 5
   z_max: 600
+
+# Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
+# the table: "front" = you face the arm (arm at top), "behind" = you stand behind it.
+map_view: front
 
 # ZONES. The table is split into one unsorted zone and the areas where piles may be made.
 #
@@ -21,21 +27,26 @@ bounds:
 #                  piles, where, and how big, after looking at the unsorted zone.
 #                  Piles are packed along each area's long side.
 #
-# THE AREAS BELOW ARE UNTESTED GUESSES either side of the unsorted zone. Make sure the
-# arm can reach their far corners top-down, then re-teach them:
-#   python scripts/01_teach_pose.py --area left     (run at two opposite corners)
+# The arm sits at the far edge of the table on its -y side, so all the open table is
+# toward +y (the side move_arm.py PLACES on, out to the side wall at y=500). Both sorted
+# areas are strips on that side: `near` beside the unsorted zone, `far` beyond it and
+# shorter in x so its outer corner stays within reach. They stop at y=440 to keep the
+# gripper clear of the wall.
+#
+# THESE ARE UNTESTED GUESSES. Check the arm reaches their far corners top-down, then
+# re-teach:  python scripts/01_teach_pose.py --area near   (run at two opposite corners)
 # Startup fails if an area overlaps the unsorted zone, another area, or the bounds.
 unsorted_zone:
   x: [230, 520]
   y: [-150, 150]
 
 sorted_areas:
-  left:
+  near:
     x: [200, 560]
-    y: [190, 370]
-  right:
-    x: [200, 560]
-    y: [-370, -190]
+    y: [190, 310]
+  far:
+    x: [200, 480]
+    y: [330, 440]
 
 piles:
   slot_gap: 15       # clearance added to a class's largest item -> that pile's slot spacing

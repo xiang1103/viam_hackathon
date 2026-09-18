@@ -31,10 +31,12 @@ Nothing about the piles is fixed in advance — only where they are *allowed* to
 Every run writes `data/debug/layout-plan.png` (the plan, before anything moves) and
 `data/debug/layout.png` (live: slots fill in as items land) — a top-down map of the table.
 `--dry-run` and `--replay` show the assessment and the plan without moving the arm.
+The map is drawn as you see the table when facing the arm (`map_view: front`; use `behind` if you stand behind it).
 
 - **What to sort by:** `--mode` (one per classifier). **Merge classes into one pile:**
   `groups: {warm: [red, orange, yellow]}` in [config/sort.yaml](config/sort.yaml).
-- **Where piles may go:** `sorted_areas` in [config/workspace.yaml](config/workspace.yaml) are untested
+- **Where piles may go:** the arm sits at the table's edge, so both `sorted_areas` in
+  [config/workspace.yaml](config/workspace.yaml) are on the open side (+y, the side `move_arm.py` places on). They are untested
   guesses. Teach real ones by jogging the gripper to two opposite corners of free table space and
   running `python scripts/01_teach_pose.py --area left` at each. Taught areas override the guesses.
 - **Spacing:** `piles.slot_gap`, `spare_slots`, `pile_gap` in `workspace.yaml`.

@@ -19,15 +19,6 @@ PALETTE = [(180, 120, 40), (70, 160, 200), (150, 90, 170), (90, 170, 120), (60, 
 X_RANGE, Y_RANGE = (-40, 760), (-520, 520)  # mm of table shown; 1 px = 1 mm
 
 
-def _px(x: float, y: float) -> tuple[int, int]:
-    """World mm -> pixel, viewed from behind the arm: +x (forward) is up, +y is left."""
-    return int(round(Y_RANGE[1] - y)), int(round(X_RANGE[1] - x))
-
-
-def _rect(img, x0, x1, y0, y1, color, thickness) -> None:
-    cv2.rectangle(img, _px(x1, y1), _px(x0, y0), color, thickness)
-
-
 def _color(key: str, i: int) -> tuple[int, int, int]:
     return NAMED.get(key, PALETTE[i % len(PALETTE)])
 
@@ -38,35 +29,56 @@ def draw_layout(
     objects: list[ObjectObservation] | None = None,
     results: list[Classification] | None = None,
 ) -> np.ndarray:
-    """Top-down map: bounds, unsorted zone, sorted areas, the piles created, and what was seen."""
+    """Top-down map: bounds, unsorted zone, sorted areas, the piles created, and what was seen.
+
+    workspace.map_view picks the viewpoint, so the map matches how you see the table:
+      front   you face the arm: arm at the top, +y on your right
+      behind  you stand behind the arm: arm at the bottom, +y on your left
+    """
+    front = workspace.get("map_view", "front") == "front"
     img = np.full((X_RANGE[1] - X_RANGE[0], Y_RANGE[1] - Y_RANGE[0], 3), 245, np.uint8)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
+    def px(x: float, y: float) -> tuple[int, int]:
+        if front:
+            return int(round(y - Y_RANGE[0])), int(round(x - X_RANGE[0]))
+        return int(round(Y_RANGE[1] - y)), int(round(X_RANGE[1] - x))
+
+    def box(x0, x1, y0, y1) -> tuple[tuple[int, int], tuple[int, int]]:
+        (ax, ay), (bx, by) = px(x0, y0), px(x1, y1)
+        return (min(ax, bx), min(ay, by)), (max(ax, bx), max(ay, by))
+
+    def text(label: str, at: tuple[int, int], color) -> None:
+        cv2.putText(img, label, at, font, 0.45, color, 1, cv2.LINE_AA)
+
     b = workspace["bounds"]
-    _rect(img, b["x"][0], b["x"][1], b["y"][0], b["y"][1], (200, 200, 200), 1)
+    cv2.rectangle(img, *box(b["x"][0], b["x"][1], b["y"][0], b["y"][1]), (200, 200, 200), 1)
     for name, a in layout.areas.items():
-        _rect(img, a["x"][0], a["x"][1], a["y"][0], a["y"][1], (225, 225, 225), -1)
-        cv2.putText(img, f"sorted area: {name}", _px(a["x"][1] + 8, a["y"][1]), font, 0.45, (130, 130, 130), 1, cv2.LINE_AA)
+        tl, br = box(a["x"][0], a["x"][1], a["y"][0], a["y"][1])
+        cv2.rectangle(img, tl, br, (225, 225, 225), -1)
+        text(f"sorted area: {name}", (tl[0], tl[1] - 8), (130, 130, 130))
 
     u = workspace["unsorted_zone"]
-    _rect(img, u["x"][0], u["x"][1], u["y"][0], u["y"][1], (255, 0, 255), 2)
-    cv2.putText(img, "unsorted zone", _px(u["x"][1] + 8, u["y"][1]), font, 0.45, (255, 0, 255), 1, cv2.LINE_AA)
+    tl, br = box(u["x"][0], u["x"][1], u["y"][0], u["y"][1])
+    cv2.rectangle(img, tl, br, (255, 0, 255), 2)
+    text("unsorted zone", (tl[0], tl[1] - 8), (255, 0, 255))
 
     for i, (key, zones) in enumerate(layout.zones.items()):
         color = _color(key, i)
         for z in zones:
-            x0, x1, y0, y1 = z.rect
-            _rect(img, x0, x1, y0, y1, color, 2)
+            tl, br = box(*z.rect)
+            cv2.rectangle(img, tl, br, color, 2)
             for n, (sx, sy) in enumerate(z.slots):
-                cv2.circle(img, _px(sx, sy), 9, color, -1 if n < z.used else 1, cv2.LINE_AA)
-            cv2.putText(img, f"{key} {z.used}/{len(z.slots)}", _px(x0 - 6, y1), font, 0.45, (60, 60, 60), 1, cv2.LINE_AA)
+                cv2.circle(img, px(sx, sy), 9, color, -1 if n < z.used else 1, cv2.LINE_AA)
+            text(f"{key} {z.used}/{len(z.slots)}", (tl[0] + 4, br[1] - 6), (60, 60, 60))
 
     for i, o in enumerate(objects or []):
         label = results[i].label if results else ""
-        cx, cy = _px(*o.centroid)
-        cv2.circle(img, (cx, cy), max(6, int(o.width / 2)), _color(label, i), -1, cv2.LINE_AA)
-        cv2.circle(img, (cx, cy), max(6, int(o.width / 2)), (60, 60, 60), 1, cv2.LINE_AA)
+        r = max(6, int(o.width / 2))
+        cv2.circle(img, px(*o.centroid), r, _color(label, i), -1, cv2.LINE_AA)
+        cv2.circle(img, px(*o.centroid), r, (60, 60, 60), 1, cv2.LINE_AA)
 
-    cv2.circle(img, _px(0, 0), 28, (90, 90, 90), -1, cv2.LINE_AA)
-    cv2.putText(img, "arm", (_px(0, 0)[0] - 14, _px(0, 0)[1] + 5), font, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    ax, ay = px(0, 0)
+    cv2.circle(img, (ax, ay), 28, (90, 90, 90), -1, cv2.LINE_AA)
+    text("arm", (ax - 14, ay + 5), (255, 255, 255))
     return img
