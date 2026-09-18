@@ -25,7 +25,7 @@ def dry_manipulator(workspace, poses):
 def test_bounds_reject_targets_outside_workspace(workspace):
     ok_z = TABLE_TOP + 100
     check_target(400, 0, ok_z, workspace)
-    off_the_table_edge = (400, -300, ok_z)  # the arm sits at the table's -y edge
+    off_the_table_edge = (400, 300, ok_z)  # measured: the table ends ~220-265 mm out on the +y side
     for bad in [(100, 0, ok_z), (720, 0, ok_z), (400, 480, ok_z), off_the_table_edge, (400, 0, TABLE_TOP + 2), (400, 0, 900)]:
         with pytest.raises(UnsafeTarget):
             check_target(*bad, workspace)
@@ -43,7 +43,7 @@ async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     obs = segment(make_frame(SCENE[:1]), workspace)[0]
     m = dry_manipulator(workspace, {})
     assert await pick(m, obs)
-    await place(m, 300, 300, TABLE_TOP + 10)
+    await place(m, 300, -300, TABLE_TOP + 10)
     actions = [r.message.split("] ")[1].split(" to ")[0] for r in caplog.records]
     assert actions == [
         "open gripper", "move", "move linear", "grab", "move linear",  # pick

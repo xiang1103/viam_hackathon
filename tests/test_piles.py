@@ -14,7 +14,7 @@ from .synthetic import TABLE_TOP, make_frame
 def workspace():
     ws = load_yaml("workspace.yaml")
     ws["table_top"] = TABLE_TOP
-    ws["sorted_areas"] = {"left": {"x": [200, 560], "y": [200, 360]}, "right": {"x": [200, 560], "y": [-360, -200]}}
+    ws["sorted_areas"] = {"near": {"x": [200, 560], "y": [-360, -200]}, "far": {"x": [200, 480], "y": [-440, -380]}}
     ws["piles"] = {"slot_gap": 20, "min_pitch": 50, "spare_slots": 2, "pile_gap": 30}
     return ws
 
@@ -103,7 +103,7 @@ def test_full_pile_grows_an_extension(workspace):
 
 
 def test_new_class_goes_to_reject_when_the_areas_are_full(workspace):
-    workspace["sorted_areas"] = {"only": {"x": [200, 420], "y": [200, 260]}}  # room for very little
+    workspace["sorted_areas"] = {"only": {"x": [200, 420], "y": [-260, -200]}}  # room for very little
     layout = PileLayout(workspace)
     layout.plan({"red": (1, 30.0)})
     assert layout.next_slot("green", 30.0)[0] == REJECT
@@ -112,19 +112,19 @@ def test_new_class_goes_to_reject_when_the_areas_are_full(workspace):
 # --- safety ---------------------------------------------------------------------
 
 def test_area_overlapping_unsorted_zone_is_rejected(workspace):
-    workspace["sorted_areas"]["bad"] = {"x": [300, 400], "y": [100, 250]}
+    workspace["sorted_areas"]["bad"] = {"x": [300, 400], "y": [-250, -100]}
     with pytest.raises(ValueError, match="picked again"):
         PileLayout(workspace).validate()
 
 
 def test_area_outside_bounds_is_rejected(workspace):
-    workspace["sorted_areas"]["far"] = {"x": [600, 760], "y": [200, 300]}
+    workspace["sorted_areas"]["off_table"] = {"x": [300, 400], "y": [200, 300]}
     with pytest.raises(ValueError, match="outside the workspace"):
         PileLayout(workspace).validate()
 
 
 def test_taught_areas_replace_the_configured_guesses(workspace):
-    taught = {"sorted_areas": {"taught": {"x": [250, 450], "y": [220, 330]}}}
+    taught = {"sorted_areas": {"taught": {"x": [250, 450], "y": [-330, -220]}}}
     assert list(PileLayout(workspace, taught).areas) == ["taught"]
 
 

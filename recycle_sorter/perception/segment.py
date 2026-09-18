@@ -169,6 +169,7 @@ def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
     seg = workspace["segmentation"]
     roi = workspace["unsorted_zone"]
     table_top = workspace["table_top"]
+    pad = seg["max_object_dim"]
 
     pts, valid, _ = level(frame, workspace)
     x, y, height = pts[..., 0], pts[..., 1], pts[..., 2] - table_top
@@ -182,8 +183,10 @@ def segment(frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
         valid
         & (height > seg["min_height"])
         & (unlike_table | (height > seg["tall_height"]))
-        & (x > roi["x"][0]) & (x < roi["x"][1])
-        & (y > roi["y"][0]) & (y < roi["y"][1])
+        # Padded, so an item straddling the zone edge is measured whole, not as a sliver.
+        # finish() then keeps the items whose CENTER is inside the zone.
+        & (x > roi["x"][0] - pad) & (x < roi["x"][1] + pad)
+        & (y > roi["y"][0] - pad) & (y < roi["y"][1] + pad)
     )
     blobs = cv2.morphologyEx(above.astype(np.uint8), cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(blobs, connectivity=8)
