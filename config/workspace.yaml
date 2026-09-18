@@ -1,9 +1,10 @@
 # All values world frame (origin = arm base), millimeters.
 
-# Height of the table SURFACE. Measure it: scripts/03_record_frames.py --table
-# prints the median world z of a bare table. Do not trust the fragment's -123
-# until measured (it may be the obstacle box center, not its top).
-table_top: -123.0
+# Height of the table SURFACE. 0 comes from move_arm.py's hardware-tested vision code:
+# block centers are detected at z = 15-40 and anything below -20 counts as under the
+# table. (The -123 in the machine config is the table OBSTACLE's center, not its top.)
+# Confirm with: scripts/03_record_frames.py --table  (bare table, prints the median z)
+table_top: 0.0
 
 # Hard limits for any commanded gripper target. Targets outside are rejected
 # before they reach the planner. Walls are at x=740 and y=500.
@@ -14,6 +15,11 @@ bounds:
   y: [-200, 460]
   z_min_above_table: 5
   z_max: 600
+  # Limits on the gripper FRAME origin (what motion.move positions), not the fingertips.
+  # Floor learned on hardware in move_arm.py: a top-down gripper frame below ~60 mm
+  # drives the wrist links into the table.
+  frame_z_min: 60
+  frame_z_max: 750
 
 # Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
 # the table: "front" = you face the arm (arm at top), "behind" = you stand behind it.
@@ -62,17 +68,19 @@ segmentation:
 gripper:
   # Distance from the gripper FRAME ORIGIN (what motion.move positions) down to the
   # fingertips. All z values in this repo mean fingertip height; this converts.
-  # 170 is inferred, not measured: move_arm.py's proven pick pose is z=75 with the
-  # table near -123, which only works if the origin sits ~170 mm above the tips.
-  # Erring high is the safe side (too high = grabs air, too low = hits the table).
-  # Measure it with scripts/02_hover_test.py.
-  tcp_offset: 170
+  # 70 is derived from move_arm.py, proven on the arm: a 30 mm block is grasped with
+  # the frame at z=75, which puts the fingertips ~5 mm above the table.
+  # Fine-tune with scripts/02_hover_test.py.
+  tcp_offset: 70
   max_open: 80         # mm - measure on day 1; objects wider than this are skipped
   finger_depth: 25     # how far below the object's top the fingertips go
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
 
 pick:
-  approach: 100        # standoff above the grasp / release height before descending
+  approach: 150        # standoff above the grasp / release height before descending (as move_arm.py)
   lift: 150            # carry height above the grasp / release height
   release_clearance: 5 # release this far above the height the item was grasped at, so it is set down, not dropped
+  # The xArm driver ignores the motion service's speed, so the final run-in onto an object
+  # is slowed by setting the arm's own joint speed, then restored (values from move_arm.py).
+  grasp_speed: 8       # deg/s during the descent and grab
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan

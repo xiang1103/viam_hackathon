@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
 from viam.components.arm import Arm
 from viam.components.gripper import Gripper
 from viam.proto.common import Pose, PoseInFrame
-from viam.proto.component.arm import JointPositions
 from viam.proto.service.motion import Constraints, LinearConstraint
 from viam.services.motion import MotionClient
 
-from .safety import check_target
+from .safety import UnsafeTarget, check_frame_pose, check_target
 
 log = logging.getLogger(__name__)
 
@@ -19,13 +19,16 @@ log = logging.getLogger(__name__)
 class Manipulator:
     """Thin, safety-checked wrapper over arm + gripper + motion service.
 
+    Every arm motion goes through the motion planner (never raw joint commands), so
+    the workcell obstacles in the machine config are respected on every move.
+
     dry_run: log every action, execute nothing.
     step:    wait for Enter before every motion.
     """
 
     def __init__(
         self,
-        arm: Arm,
+        arm: Arm | None,
         gripper: Gripper,
         motion: MotionClient,
         machine_cfg: dict[str, Any],
@@ -39,6 +42,7 @@ class Manipulator:
         self.move_frame = machine_cfg["move_frame"]
         self.timeout = machine_cfg["rpc_timeout_s"]
         self.trust_is_holding = machine_cfg.get("trust_is_holding", False)
+        self.normal_speed = machine_cfg.get("arm_speed")
         self.dry_run, self.step = dry_run, step
 
     async def _confirm(self, what: str) -> None:
@@ -46,18 +50,8 @@ class Manipulator:
         if self.step and not self.dry_run:
             await asyncio.to_thread(input, f"  ENTER to: {what} (Ctrl-C aborts) ")
 
-    async def move_to(self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False) -> None:
-        """Put the FINGERTIPS at (x, y, z) in the world frame, gripper pointing straight down.
-
-        Bounds are checked on the fingertip position; the pose sent to the planner
-        is the gripper frame origin, tcp_offset above it.
-        """
-        check_target(x, y, z, self.workspace)
-        await self._confirm(f"move {'linear ' if linear else ''}to x={x:.0f} y={y:.0f} z={z:.0f} theta={theta:.0f}")
-        if self.dry_run:
-            return
-        frame_z = z + self.workspace["gripper"]["tcp_offset"]
-        dest = PoseInFrame(reference_frame="world", pose=Pose(x=x, y=y, z=frame_z, o_x=0, o_y=0, o_z=-1, theta=theta))
+    async def _move(self, pose: Pose, linear: bool = False) -> None:
+        dest = PoseInFrame(reference_frame="world", pose=pose)
         if linear:
             tol = self.workspace["pick"]["line_tolerance_mm"]
             constraints = Constraints(linear_constraint=[LinearConstraint(line_tolerance_mm=tol)])
@@ -71,17 +65,50 @@ class Manipulator:
         if not await self.motion.move(self.move_frame, dest, timeout=self.timeout):
             raise RuntimeError("motion.move returned False")
 
+    async def move_to(self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False) -> None:
+        """Put the FINGERTIPS at (x, y, z) in the world frame, gripper pointing straight down.
+
+        Bounds are checked on the fingertip position; the pose sent to the planner is
+        the gripper frame origin, tcp_offset above it, which has its own floor.
+        """
+        check_target(x, y, z, self.workspace)
+        frame_z = z + self.workspace["gripper"]["tcp_offset"]
+        floor = self.workspace["bounds"]["frame_z_min"]
+        if frame_z < floor:
+            raise UnsafeTarget(f"gripper frame z={frame_z:.0f} is below the {floor} mm floor (wrist would hit the table)")
+        await self._confirm(f"move {'linear ' if linear else ''}to x={x:.0f} y={y:.0f} z={z:.0f} theta={theta:.0f}")
+        if not self.dry_run:
+            await self._move(Pose(x=x, y=y, z=frame_z, o_x=0, o_y=0, o_z=-1, theta=theta), linear)
+
     async def goto_named(self, name: str) -> None:
-        """Joint-space move to a taught pose: repeatable, and needs no planner."""
-        if name not in self.poses.get("joints", {}):
+        """Planner move to a stored gripper-frame pose (poses.yaml -> named)."""
+        named = self.poses.get("named", {})
+        if name not in named and name == "home":
+            name = "survey"
+        if name not in named:
             raise KeyError(f"pose {name!r} not taught yet - run scripts/01_teach_pose.py {name}")
-        await self._confirm(f"joint move to '{name}'")
+        p = named[name]
+        check_frame_pose(p["x"], p["y"], p["z"], self.workspace)
+        await self._confirm(f"move to '{name}' pose")
         if self.dry_run:
             return
-        await self.arm.move_to_joint_positions(JointPositions(values=self.poses["joints"][name]), timeout=self.timeout)
-        while await self.arm.is_moving():
-            await asyncio.sleep(0.05)
+        await self._move(Pose(**{k: float(p[k]) for k in ("x", "y", "z", "o_x", "o_y", "o_z", "theta")}))
         await asyncio.sleep(0.3)  # let the wrist camera settle before a capture
+
+    async def set_speed(self, degs_per_sec: float | None) -> None:
+        """Arm joint speed. The xArm driver ignores the motion service's speed, so this is the only lever."""
+        if self.dry_run or self.arm is None or not degs_per_sec:
+            return
+        await self.arm.do_command({"set_speed": float(degs_per_sec)})
+
+    @asynccontextmanager
+    async def slow(self):
+        """Gentle joint speed for the final run-in onto an object; always restored afterwards."""
+        await self.set_speed(self.workspace["pick"].get("grasp_speed"))
+        try:
+            yield
+        finally:
+            await self.set_speed(self.normal_speed)
 
     async def open(self) -> None:
         await self._confirm("open gripper")
@@ -92,14 +119,14 @@ class Manipulator:
         await self._confirm("grab")
         if self.dry_run:
             return True
+        # UFactory grab() blocks until the jaws finish and returns whether something
+        # is held. Do not poll is_moving afterwards: it is always false by then.
         grabbed = await self.gripper.grab(timeout=self.timeout)
-        # is_holding_something is only reliable on some grippers (e.g. xArm G2).
-        # Enable trust_is_holding in machine.yaml once verified on the real one.
         if not self.trust_is_holding:
             return grabbed
         status = await self.gripper.is_holding_something(timeout=self.timeout)
         return bool(status.is_holding_something)
 
     async def stop(self) -> None:
-        if not self.dry_run:
+        if not self.dry_run and self.arm is not None:
             await self.arm.stop()

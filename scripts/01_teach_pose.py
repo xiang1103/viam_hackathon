@@ -1,14 +1,13 @@
 """Read-only on the robot. Jog the arm (Viam app CONTROL tab), then record where it is.
 
-    python scripts/01_teach_pose.py home          # joint pose
-    python scripts/01_teach_pose.py survey        # joint pose: camera top-down, ~400 mm above the pile
+    python scripts/01_teach_pose.py home          # where the arm parks when a run ends
+    python scripts/01_teach_pose.py survey        # where the wrist camera sees the whole unsorted zone
     python scripts/01_teach_pose.py --area left   # run at two opposite corners of free table space:
                                                   # the rectangle between them becomes a sorted area
 """
 import argparse
 import asyncio
 
-from viam.components.arm import Arm
 from viam.services.motion import MotionClient
 
 from recycle_sorter.config import load_yaml, save_yaml
@@ -41,9 +40,11 @@ async def main() -> None:
             else:
                 print(f"area {args.area}: corner 1 at ({p.x:.1f}, {p.y:.1f}) - now jog to the opposite corner and run again")
         else:
-            joints = await Arm.from_robot(machine, cfg["arm"]).get_joint_positions()
-            poses.setdefault("joints", {})[args.name] = [round(v, 3) for v in joints.values]
-            print(f"pose {args.name}: {poses['joints'][args.name]}")
+            motion = MotionClient.from_robot(machine, cfg["motion"])
+            p = (await motion.get_pose(cfg["move_frame"], "world")).pose
+            fields = ("x", "y", "z", "o_x", "o_y", "o_z", "theta")
+            poses.setdefault("named", {})[args.name] = {k: round(getattr(p, k), 4) for k in fields}
+            print(f"pose {args.name}: {poses['named'][args.name]}")
         save_yaml("poses.yaml", poses)
     finally:
         await machine.close()

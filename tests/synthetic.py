@@ -6,7 +6,7 @@ import numpy as np
 
 from recycle_sorter.types import Frame, Intrinsics
 
-TABLE_TOP = -123.0
+TABLE_TOP = 0.0
 CAM_POS = np.array([400.0, 0.0, TABLE_TOP + 400.0])
 INTR = Intrinsics(width=640, height=480, fx=600.0, fy=600.0, cx=320.0, cy=240.0)
 

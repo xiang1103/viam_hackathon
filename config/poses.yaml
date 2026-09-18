@@ -1,9 +1,16 @@
-# Fixed poses for the blind static pick/place cycle (no camera). Values proven on
-# the arm in the original move_arm.py. frame_z is the GRIPPER FRAME origin height,
-# exactly as sent to motion.move - not fingertip height.
+# All poses are the GRIPPER FRAME origin in the world frame (mm, orientation vector,
+# theta in degrees), exactly as sent to motion.move - not fingertip positions.
+
+# Fixed poses for the blind static pick/place cycle (no camera). From move_arm.py.
 static:
   pick: {x: 300, y: -150, frame_z: 75, theta: 0}
   place: {x: 300, y: 150, frame_z: 75, theta: 0}
 
-# Added by scripts/01_teach_pose.py:
-#   joints: {home: [...], survey: [...]}
+# Named poses the arm is sent to through the motion planner (never raw joint moves, so
+# the workcell obstacles are always respected). `survey` is move_arm.py's WATCH_POSE,
+# proven on the arm: the wrist camera sees the workspace from here. It is tilted about
+# 22 degrees off vertical, which perception handles because it works in world coordinates.
+# Re-teach any of them with: python scripts/01_teach_pose.py survey
+# `home` falls back to `survey` until it is taught.
+named:
+  survey: {x: 197.46, y: 0.14, z: 616.44, o_x: 0.3746, o_y: 0.0008, o_z: -0.9272, theta: -4.12}

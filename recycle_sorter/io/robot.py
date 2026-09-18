@@ -10,7 +10,7 @@ from viam.components.arm import Arm
 from viam.components.camera import Camera
 from viam.components.gripper import Gripper
 from viam.media.video import CameraMimeType
-from viam.proto.common import Pose, PoseInFrame
+from viam.proto.common import Pose, PoseInFrame, Transform
 from viam.robot.client import RobotClient
 from viam.services.motion import MotionClient
 
@@ -69,11 +69,7 @@ class LiveRobot:
             dry_run=dry_run,
             step=step,
         )
-        if cfg.get("arm_speed") and not dry_run:
-            try:
-                await arm.do_command({"set_speed": float(cfg["arm_speed"])})
-            except Exception as e:
-                log.warning("could not set arm speed (%s) - check the arm model's do_command keys", e)
+        await manip.set_speed(cfg.get("arm_speed"))
         return cls(machine, cfg, manip)
 
     async def intrinsics(self) -> Intrinsics:
@@ -85,8 +81,17 @@ class LiveRobot:
         return self._intrinsics
 
     async def _transform_point(self, x: float, y: float, z: float) -> tuple[float, float, float]:
-        query = PoseInFrame(reference_frame=self.camera_name, pose=Pose(x=x, y=y, z=z, o_z=1))
-        p = (await self.machine.transform_pose(query, "world")).pose
+        """A camera-frame point in the world frame.
+
+        The point is registered as a temporary frame hanging off the camera and the
+        motion service is asked where that frame is. Unlike RobotClient.transform_pose
+        this also works inside a module (technique proven on the arm in move_arm.py).
+        """
+        probe = Transform(
+            reference_frame="sorter_probe",
+            pose_in_observer_frame=PoseInFrame(reference_frame=self.camera_name, pose=Pose(x=x, y=y, z=z, o_z=1)),
+        )
+        p = (await self.manip.motion.get_pose("sorter_probe", "world", [probe], timeout=self.cfg["rpc_timeout_s"])).pose
         return p.x, p.y, p.z
 
     async def snapshot(self) -> Frame:
@@ -109,7 +114,7 @@ class LiveRobot:
             log.warning("depth %s != color %s: enable align_color_depth on the camera", depth.shape, color.shape[:2])
             depth = cv2.resize(depth, (color.shape[1], color.shape[0]), interpolation=cv2.INTER_NEAREST)
 
-        joints = await self.manip.arm.get_joint_positions()
+        joints = await self.manip.arm.get_joint_positions()  # read-only: recorded with the frame
         return Frame(
             color=color,
             depth=depth,

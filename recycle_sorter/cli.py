@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .app import run_replay, run_sort
 from .io.robot import LiveRobot
+from .service import run_local
 
 
 async def main() -> None:
@@ -16,11 +17,19 @@ async def main() -> None:
     ap.add_argument("--step", action="store_true", help="press Enter before every motion")
     ap.add_argument("--max-picks", type=int, default=50)
     ap.add_argument("--replay", type=Path, metavar="DIR", help="run perception over saved frames; no robot")
+    ap.add_argument(
+        "--action",
+        choices=["static-cycle", "go-to-pick", "go-to-place"],
+        help="blind fixed-pose motion check through this package, no camera (same poses as move_arm.py)",
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
     if args.replay:
         await run_replay(args.replay, args.mode)
+        return
+    if args.action:
+        print("Result:", await run_local({"action": args.action}, dry_run=args.dry_run, step=args.step))
         return
 
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)

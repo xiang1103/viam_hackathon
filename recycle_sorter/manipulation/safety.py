@@ -20,3 +20,17 @@ def check_target(x: float, y: float, z: float, workspace: dict[str, Any]) -> Non
         problems.append(f"z={z:.0f} outside [{z_min:.0f}, {b['z_max']}]")
     if problems:
         raise UnsafeTarget("; ".join(problems))
+
+
+def check_frame_pose(x: float, y: float, z: float, workspace: dict[str, Any]) -> None:
+    """Bounds for a pose given directly as the gripper FRAME origin (named poses such as survey)."""
+    b = workspace["bounds"]
+    problems = []
+    if not b["x"][0] <= x <= b["x"][1]:
+        problems.append(f"x={x:.0f} outside {b['x']}")
+    if not b["y"][0] <= y <= b["y"][1]:
+        problems.append(f"y={y:.0f} outside {b['y']}")
+    if not b["frame_z_min"] <= z <= b["frame_z_max"]:
+        problems.append(f"frame z={z:.0f} outside [{b['frame_z_min']}, {b['frame_z_max']}]")
+    if problems:
+        raise UnsafeTarget("; ".join(problems))

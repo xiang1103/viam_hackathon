@@ -23,8 +23,9 @@ async def pick_at(m: Manipulator, x: float, y: float, z: float, theta: float = 0
         log.warning("approach failed (%s); retrying with theta+180", e)
         theta += 180.0
         await m.move_to(x, y, z + p["approach"], theta)
-    await m.move_to(x, y, z, theta, linear=True)
-    held = await m.grab()
+    async with m.slow():
+        await m.move_to(x, y, z, theta, linear=True)
+        held = await m.grab()
     # Raise before any lateral move so the object does not drag across the table.
     await m.move_to(x, y, z + p["lift"], theta, linear=True)
     return held

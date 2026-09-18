@@ -1,4 +1,7 @@
-"""The hackathon module's generic service (`code-1`), as a thin shell over the package.
+"""This package's motions behind the same do_command interface as the hackathon module.
+
+The team's deployed module code is move_arm.py; this mirrors its class name, MODEL and
+action names so the package can be dropped into the module later without renaming anything.
 
 Runs two ways:
   * in viam-server, as the module: dependencies arrive through `new()`.
@@ -96,9 +99,9 @@ class MyGenericService(GenericService, EasyResource):
             return {"success": True}
         if action == "sort":
             if self.live is None:
-                # Camera->world transforms come from the machine's frame system,
-                # which a module only reaches through its own RobotClient.
-                return {"error": "sort needs a RobotClient; run it locally for now"}
+                # Not wired for module mode yet: the camera would have to arrive as a
+                # dependency. Everything else already works without a RobotClient.
+                return {"error": "sort is only wired for local runs so far: python -m recycle_sorter.cli"}
             from .app import run_sort
 
             counts = await run_sort(self.live, str(command.get("mode", "color")), int(command.get("max_picks", 50)))

@@ -53,6 +53,11 @@ def draw_layout(
 
     b = workspace["bounds"]
     cv2.rectangle(img, *box(b["x"][0], b["x"][1], b["y"][0], b["y"][1]), (200, 200, 200), 1)
+    # The arm sits at the table's -y edge. This marks the configured limit on that side
+    # (bounds.y[0]), not a measured table edge.
+    e0, e1 = px(X_RANGE[0] + 40, b["y"][0]), px(X_RANGE[1] - 20, b["y"][0])
+    cv2.line(img, e0, e1, (90, 90, 90), 3)
+    text("edge-side limit", (min(e0[0], e1[0]) + (8 if not front else -112), max(e0[1], e1[1]) - 8), (90, 90, 90))
     for name, a in layout.areas.items():
         tl, br = box(a["x"][0], a["x"][1], a["y"][0], a["y"][1])
         cv2.rectangle(img, tl, br, (225, 225, 225), -1)

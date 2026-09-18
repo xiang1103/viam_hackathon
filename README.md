@@ -55,10 +55,10 @@ cp .env.example .env    # fill in from the Viam app: machine → CONNECT → API
 
 | # | Command | Moves arm? | What you learn / must pass |
 |---|---|---|---|
-| 0 | `python move_arm.py --step` | **yes**, Enter per move | Blind pick→place between two fixed poses (`config/poses.yaml` → `static`). Proves arm + gripper + motion before any vision. |
+| 0 | `python -m recycle_sorter.cli --action static-cycle --step` | **yes**, Enter per move | Blind pick→place between `move_arm.py`'s two fixed poses, but through this package. Proves our motion layer matches theirs before any vision. |
 | 1 | `python scripts/00_discover.py` | no | Resource names, frame tree, camera streams. Color and depth must be the **same resolution** — if not, set `align_color_depth: true` on the RealSense (fragment mod). |
-| 2 | Jog in the Viam app, then `python scripts/01_teach_pose.py home` and `... survey` | no | `survey` = camera pointing straight down, ~400 mm above the pile (RealSense can't see closer than ~280 mm). |
-| 3 | Clear the table, go to survey, `python scripts/03_record_frames.py --table` | no | Prints the measured `table_top` → put it in `config/workspace.yaml`. |
+| 2 | *(optional)* Jog in the Viam app, then `python scripts/01_teach_pose.py survey` / `home` | no | `survey` ships as `move_arm.py`'s proven `WATCH_POSE`, so only re-teach it if the magenta unsorted zone isn't fully in view. |
+| 3 | Clear the table, go to survey, `python scripts/03_record_frames.py --table` | no | Prints the measured `table_top` (expected ≈ 0) → put it in `config/workspace.yaml`. |
 | 4 | One block on the table: `python scripts/02_hover_test.py` | **yes**, Enter per move | **Gate: gripper hovers within 15 mm of the block in x/y, and fingertips sit `--hover` (60) mm above its top.** A height error goes into `gripper.tcp_offset`; finger rotation into `yaw_offset_deg`. If it fails, fix the camera frame / `move_frame` before anything else. |
 | 5 | Jog to two opposite corners of free table space, running `python scripts/01_teach_pose.py --area left` at each (repeat for `right`) | no | Replaces the guessed sorted areas with ones the arm can really reach. Check the magenta unsorted zone in `data/debug/` covers where you dump items. |
 | 6 | `python -m recycle_sorter.cli --mode color --dry-run` | no | Assessment + pile plan + first pick logged, nothing moves. Check `data/debug/layout-plan.png`. |
@@ -108,9 +108,10 @@ Ctrl-C stops the arm; the workcell fragment's walls/table/ceiling are in every m
 ## Layout
 
 ```
-move_arm.py                      entry point: blind static cycle (no camera)
-recycle_sorter/
-  service.py                     MyGenericService = the code-1 module; do_command → package
+move_arm.py  connect.py          Xiang's working module code: single-object vision pick via the Viam
+                                 vision service. Hardware-proven. NOT edited on this branch.
+recycle_sorter/                  multi-object, multi-class sorter built around the same motion rules
+  service.py                     same do_command interface as move_arm.py, backed by the package
   app.py / cli.py                run_sort loop, --dry-run / --step / --replay
   io/          robot.py (connect, snapshot)   recorder.py (save / load frames)
   perception/  frames.py  segment.py  select.py

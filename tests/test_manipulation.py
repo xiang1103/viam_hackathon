@@ -23,8 +23,10 @@ def dry_manipulator(workspace, poses):
 
 
 def test_bounds_reject_targets_outside_workspace(workspace):
-    check_target(400, 0, 0, workspace)
-    for bad in [(100, 0, 0), (720, 0, 0), (400, 480, 0), (400, 0, TABLE_TOP + 2), (400, 0, 900)]:
+    ok_z = TABLE_TOP + 100
+    check_target(400, 0, ok_z, workspace)
+    off_the_table_edge = (400, -300, ok_z)  # the arm sits at the table's -y edge
+    for bad in [(100, 0, ok_z), (720, 0, ok_z), (400, 480, ok_z), off_the_table_edge, (400, 0, TABLE_TOP + 2), (400, 0, 900)]:
         with pytest.raises(UnsafeTarget):
             check_target(*bad, workspace)
 
@@ -92,15 +94,15 @@ def live_manipulator(workspace, motion, gripper):
     return Manipulator(None, gripper, motion, cfg, workspace, load_yaml("poses.yaml"))
 
 
-# What the original hard-coded run_static_cycle sent to motion.move, minus its one
-# redundant repeat of the place-lift pose: PICK/PLACE at z=75, approach +100, lift +150.
+# What move_arm.py's run_static_cycle sends to motion.move, minus its one redundant
+# repeat of the place-lift pose: PICK/PLACE at z=75, approach +150, lift +150.
 ORIGINAL_STATIC_CYCLE = [
-    (300, -150, 175), (300, -150, 75), (300, -150, 225),
+    (300, -150, 225), (300, -150, 75), (300, -150, 225),
     (300, 150, 225), (300, 150, 75), (300, 150, 225),
 ]
 
 
-@pytest.mark.parametrize("tcp_offset", [0, 170])
+@pytest.mark.parametrize("tcp_offset", [60, 70])
 async def test_static_cycle_commands_the_original_poses(workspace, tcp_offset):
     from recycle_sorter.manipulation.pickplace import static_cycle
 
@@ -130,10 +132,47 @@ async def test_linear_descent_falls_back_to_free_plan(workspace):
 
 
 async def test_tcp_offset_lifts_the_commanded_frame_above_the_fingertips(workspace):
-    workspace["gripper"]["tcp_offset"] = 170
+    workspace["gripper"]["tcp_offset"] = 70
     motion = FakeMotion()
-    await live_manipulator(workspace, motion, FakeGripper()).move_to(400, 0, -100)
-    assert motion.calls[0][4] == 70  # fingertips at -100 -> gripper frame at +70
+    await live_manipulator(workspace, motion, FakeGripper()).move_to(400, 0, TABLE_TOP + 10)
+    assert motion.calls[0][4] == TABLE_TOP + 80  # fingertips 10 above the table -> frame 80 above
+
+
+async def test_gripper_frame_never_goes_below_the_hardware_floor(workspace):
+    # move_arm.py: a top-down gripper frame below ~60 mm drives the wrist into the table.
+    workspace["table_top"], workspace["gripper"]["tcp_offset"] = 0.0, 40
+    motion = FakeMotion()
+    with pytest.raises(UnsafeTarget, match="floor"):
+        await live_manipulator(workspace, motion, FakeGripper()).move_to(400, 0, 10)  # frame would be 50
+    assert motion.calls == []
+
+
+class FakeArm:
+    def __init__(self):
+        self.speeds = []
+
+    async def do_command(self, cmd):
+        self.speeds.append(cmd["set_speed"])
+
+
+async def test_descent_and_grab_run_slow_then_speed_is_restored(workspace):
+    from recycle_sorter.manipulation.pickplace import pick_at
+
+    arm, gripper = FakeArm(), FakeGripper()
+    cfg = {"move_frame": "gripper", "rpc_timeout_s": 5, "arm_speed": 25}
+    m = Manipulator(arm, gripper, FakeMotion(), cfg, workspace, {})
+    await pick_at(m, 400, 0, TABLE_TOP + 10)
+    assert arm.speeds == [8.0, 25.0]
+
+
+async def test_named_pose_goes_through_the_planner_with_its_full_orientation(workspace):
+    motion = FakeMotion()
+    m = live_manipulator(workspace, motion, FakeGripper())
+    await m.goto_named("survey")
+    await m.goto_named("home")  # untaught -> falls back to survey
+    assert len(motion.calls) == 2 and motion.calls[0] == motion.calls[1]
+    _, frame, x, _, z, o_z, _ = motion.calls[0]
+    assert frame == "world" and round(x) == 197 and round(z) == 616 and round(o_z, 2) == -0.93
 
 
 async def test_service_do_command_matches_original_actions(workspace):
