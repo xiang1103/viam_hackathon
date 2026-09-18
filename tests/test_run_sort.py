@@ -141,3 +141,20 @@ async def test_unknown_look_mode_is_refused_before_anything_moves():
     with pytest.raises(ValueError, match="look must be one of"):
         await app.run_sort(robot, "color", look="sometimes")
     assert robot.pictures == 0 and robot.xy == (0.0, 0.0)
+
+
+async def test_an_order_fetches_only_what_was_asked_for_and_reports_what_is_missing(caplog):
+    robot = SimRobot(SCENE)  # 2 red, 1 blue, 1 green on the table
+    with caplog.at_level("INFO", logger="recycle_sorter"):
+        counts = await app.run_sort(robot, "color", wanted={"red": 1, "blue": 1, "yellow": 2})
+
+    assert dict(counts) == {"red": 1, "blue": 1}
+    assert sorted(color for color, _, _ in robot.placed) == ["blue", "red"]
+    assert len(robot.scene) == 2 and robot.holding is None  # the other red and the green were left alone
+    assert "missing from the order: {'yellow': 2}" in caplog.text
+
+
+async def test_a_filled_order_stops_without_another_look():
+    robot = SimRobot(SCENE)
+    counts = await app.run_sort(robot, "color", wanted={"green": 1})
+    assert dict(counts) == {"green": 1} and robot.pictures == 1

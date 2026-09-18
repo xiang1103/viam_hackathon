@@ -241,3 +241,31 @@ async def test_an_item_with_no_usable_box_is_unknown_rather_than_dropped():
     clf = ClaudeBrandClassifier({"categories": CATEGORIES}, client=FakeClaude(lambda i: ("coke", 0.9)))
     results = await clf.classify_batch([seen_in_survey(400, 0, (0, 0, 0, 0))], survey_frame())
     assert [r.label for r in results] == ["unknown"]
+
+
+async def test_local_label_reader_maps_its_answers_to_piles():
+    """The free local reader (llm/classify_image.py) plugs in as a classifier; here it is a fake - no model runs."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+    from recycle_sorter.policy.sort_policy import REJECT, SortPolicy
+
+    answers = iter([
+        SimpleNamespace(label="diet_coke", confidence="high", visible_text="Diet Coke", closest_reference="diet_coke"),
+        SimpleNamespace(label="sparkling_water", confidence="low", visible_text="", closest_reference="none"),
+        SimpleNamespace(label="not_supported", confidence="high", visible_text="", closest_reference="none"),
+    ])
+    sent = []
+
+    def read(jpeg: bytes):
+        sent.append(jpeg)
+        return next(answers)
+
+    cfg = {"modes": {"label": {"classifier": "local_vlm", "min_confidence": 0.6, "groups": {}}}}
+    classifier, policy = LocalLabelClassifier(cfg["modes"]["label"], read=read), SortPolicy(cfg, "label")
+    can = SimpleNamespace(crop=np.full((140, 110, 3), 200, np.uint8), bbox=(0, 0, 110, 140))
+    piles = [policy.pile_key(await classifier.classify(can, None)) for _ in range(3)]
+    assert piles == ["diet_coke", REJECT, REJECT]  # sure -> its pile; unsure or not a drink -> reject
+    assert all(j[:2] == b"\xff\xd8" for j in sent)  # JPEG bytes, as the reader expects

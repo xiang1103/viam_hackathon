@@ -45,7 +45,8 @@ def grasp_pose(obs: ObjectObservation, workspace: dict) -> tuple[float, float, f
     g = workspace["gripper"]
     z = max(obs.top_z - g["finger_depth"], workspace["table_top"] + workspace["bounds"]["z_min_above_table"])
     x, y = obs.grasp_xy if obs.grasp_xy is not None else obs.centroid
-    return float(x), float(y), z, obs.yaw_deg + g["yaw_offset_deg"]
+    dx, dy = g.get("xy_offset", (0.0, 0.0))  # camera-to-arm calibration error, measured with the hover test
+    return float(x) + dx, float(y) + dy, z, obs.yaw_deg + g["yaw_offset_deg"]
 
 
 async def pick(m: Manipulator, obs: ObjectObservation) -> bool:

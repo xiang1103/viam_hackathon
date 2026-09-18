@@ -41,10 +41,17 @@ def make_classifier(mode: str, sort_cfg: dict[str, Any]) -> Classifier:
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             raise SystemExit("mode %r reads labels with Claude: put ANTHROPIC_API_KEY=... in .env first." % mode)
         return ClaudeBrandClassifier(sort_cfg["modes"][mode])
+    if kind == "local_vlm":
+        from .classify.label_vlm import LocalLabelClassifier
+
+        return LocalLabelClassifier(sort_cfg["modes"][mode])
     if mode == "color":
+        hsv = HSVColorClassifier(sort_cfg["colors"])
+        if load_yaml("machine.yaml").get("perception") == "yolo":
+            return hsv  # YOLO only finds the item; its label ("bottle") says nothing about color
         # The class is the Viam vision service that found the object; HSV covers objects
         # that did not come from one (OpenCV fallback, frames recorded without a service).
-        return VisionLabelClassifier(fallback=HSVColorClassifier(sort_cfg["colors"]))
+        return VisionLabelClassifier(fallback=hsv)
     raise ValueError(f"no classifier for mode {mode!r} yet")
 
 
@@ -109,7 +116,12 @@ def save_scan_debug(scan: Frame, seen, results, name: str) -> Path:
 
 
 async def run_sort(
-    robot: LiveRobot, mode: str, max_picks: int = 50, look: str | None = None, look_only: bool = False
+    robot: LiveRobot,
+    mode: str,
+    max_picks: int = 50,
+    look: str | None = None,
+    look_only: bool = False,
+    wanted: dict[str, int] | None = None,
 ) -> Counter:
     """Assess the unsorted zone, create piles to fit what is there, then empty it into them.
 
@@ -125,6 +137,10 @@ async def run_sort(
                    after picking something that had a close neighbour, and once at the end to
                    confirm the zone is empty.
       every_pick   a new picture after every pick. Slowest, most careful.
+
+    `wanted` turns the run into an ORDER: {class: how many}, e.g. {"coke": 2, "sparkling_water": 1}.
+    Only those items are picked, the surest reads first, each class set down in its own pile;
+    everything else stays where it is. What could not be found is logged as missing.
     """
     look = look or robot.manip.workspace["pick"].get("look", "when_needed")
     if look not in LOOKS:
@@ -136,6 +152,8 @@ async def run_sort(
     record_objects = robot.cfg.get("perception", "depth") == "viam"  # a service cannot be re-run offline
 
     sorted_counts: Counter = Counter()
+    remaining = Counter(wanted or {})  # order mode: what is still to be fetched
+    known: list[tuple[np.ndarray, Classification]] = []  # what each spot held at the last look
     attempts: list[np.ndarray] = []  # centroids of failed grasps
     failures = 0
     planned = False
@@ -172,13 +190,24 @@ async def run_sort(
             log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp))
         elif hasattr(classifier, "classify_batch"):
             results = await classifier.classify_batch(objects, frame)  # all items in one request
+        elif getattr(classifier, "remember", False):
+            # A slow reader (seconds per item): an item that has not moved keeps what was read last time.
+            results = []
+            for o in objects:
+                seen_before = next((r for c, r in known if np.linalg.norm(c - o.centroid) < 25.0), None)
+                results.append(seen_before or await classifier.classify(o, frame))
+            known[:] = [(o.centroid, r) for o, r in zip(objects, results)]
         else:
             results = await classify_all(objects, frame, classifier)
         save_debug(frame, objects, results, frame.timestamp, workspace)
         if not planned:
             readable = [(o, r) for o, r in zip(objects, results) if not r.meta.get("defer")]
             demand = assess([o for o, _ in readable], [r for _, r in readable], policy)
-            log.info("assessment: %s", {k: n for k, (n, _) in demand.items()} or "nothing in the unsorted zone")
+            if wanted is not None:  # piles only for what was ordered, and no bigger than the order
+                log.info("on the table: %s", {k: n for k, (n, _) in demand.items()})
+                demand = {k: (min(n, wanted[k]), size) for k, (n, size) in demand.items() if k in wanted}
+            nothing = "nothing in the unsorted zone" if wanted is None else "none of the order is on the table"
+            log.info("%s: %s", "assessment" if wanted is None else "to fetch", {k: n for k, (n, _) in demand.items()} or nothing)
             layout.plan(demand)
             log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
             planned = True
@@ -187,6 +216,9 @@ async def run_sort(
     looks, fresh = 0, False
 
     for _ in range(max_picks):
+        if wanted is not None and not any(remaining.values()):
+            log.info("order complete")
+            break
         if queue:
             fresh = False
         else:
@@ -204,7 +236,11 @@ async def run_sort(
             if look_only:
                 break
             queue = [(o, r) for o, r in seen if not r.meta.get("defer")]
-            if len(queue) < len(seen) and (not queue or look == "once"):
+            if wanted is not None:
+                queue = [(o, r) for o, r in queue if remaining[policy.pile_key(r)] > 0]
+                if not queue:
+                    break  # nothing (more) of what was ordered is on the table
+            elif len(queue) < len(seen) and (not queue or look == "once"):
                 # Hidden items normally wait for a later look, once what is in front has been
                 # sorted. With nothing in front left to sort (or no later look), set them aside.
                 log.warning("%d item(s) could not be seen from the side: sending them to reject", len(seen) - len(queue))
@@ -214,7 +250,13 @@ async def run_sort(
             a for a in attempts
             if sum(np.linalg.norm(a - b) < 40.0 for b in attempts) >= MAX_ATTEMPTS_PER_SPOT
         ]
-        target = choose_next([o for o, _ in queue], workspace, blacklist)
+        candidates = [o for o, _ in queue]
+        if wanted is not None:  # the surest read of any ordered class first, not simply the easiest grasp
+            best = max(r.confidence for _, r in queue)
+            candidates = [o for o, r in queue if r.confidence >= best - 1e-9]
+        target = choose_next(candidates, workspace, blacklist)
+        if target is None and wanted is not None:
+            target = choose_next([o for o, _ in queue], workspace, blacklist)
         if target is None:
             if fresh or look == "once":
                 log.warning("%d object(s) left but none graspable (too wide or given up on)", len(queue))
@@ -249,6 +291,9 @@ async def run_sort(
 
         failures = 0
         sorted_counts[key] += 1
+        if wanted is not None:
+            remaining[policy.pile_key(result)] -= 1
+            queue = [(o, r) for o, r in queue if remaining[policy.pile_key(r)] > 0]
         save_layout(workspace, layout)
         if look == "every_pick":
             queue = []
@@ -256,6 +301,8 @@ async def run_sort(
             log.info("a neighbour was close to that pick - taking a new picture")
             queue = []
 
+    if wanted is not None and any(remaining.values()):
+        log.warning("missing from the order: %s", {k: n for k, n in remaining.items() if n > 0})
     log.info("pictures taken: %d", looks)
     if layout is not None:
         log.info("piles: %s", layout.summary())
