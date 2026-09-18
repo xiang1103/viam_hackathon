@@ -23,7 +23,12 @@ async def main() -> None:
         help="blind fixed-pose motion check through this package, no camera (same poses as move_arm.py)",
     )
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+    ours = logging.getLogger("recycle_sorter")  # not the root logger: viam logs there too, and would print twice
+    ours.addHandler(handler)
+    ours.setLevel(logging.INFO)
+    ours.propagate = False
 
     if args.replay:
         await run_replay(args.replay, args.mode)

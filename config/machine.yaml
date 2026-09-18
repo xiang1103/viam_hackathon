@@ -39,3 +39,5 @@ trust_is_holding: false
 # the driver default of 60; 25 is deliberately cautious while this code is unproven on the arm.
 arm_speed: 25
 rpc_timeout_s: 30
+# A color + raw depth frame is megabytes; over a relayed connection it can take a while.
+image_timeout_s: 90

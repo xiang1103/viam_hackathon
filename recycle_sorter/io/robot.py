@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +30,14 @@ log = logging.getLogger(__name__)
 async def connect() -> RobotClient:
     address, key_id, key = viam_credentials()
     opts = RobotClient.Options.with_api_key(api_key=key, api_key_id=key_id)
+    # The SDK pings the machine every 10 s with a 1 s timeout and, after three misses,
+    # closes the channel - killing whatever request is in flight. Downloading a color +
+    # raw depth frame (megabytes) saturates the link long enough to trip it, so the SDK
+    # ends up cutting its own connection mid-download. Both intervals must be 0 to
+    # switch it off. This is NOT the session heartbeat that stops the arm if this
+    # process dies: sessions stay enabled.
+    opts.check_connection_interval = 0
+    opts.attempt_reconnect_interval = 0
     return await RobotClient.at_address(address, opts)
 
 
@@ -98,8 +108,25 @@ class LiveRobot:
         p = (await self.manip.motion.get_pose("sorter_probe", "world", [probe], timeout=self.cfg["rpc_timeout_s"])).pose
         return p.x, p.y, p.z
 
+    async def _get_images(self):
+        """Color + raw depth is by far the largest transfer in a run, so it gets its own timeout and a retry."""
+        timeout, last = self.cfg.get("image_timeout_s", 90), None
+        for attempt in (1, 2, 3):
+            start = time.monotonic()
+            try:
+                images, _ = await self.camera.get_images(timeout=timeout)
+            except Exception as e:
+                last = e
+                log.warning("camera download failed after %.1f s (attempt %d/3): %r", time.monotonic() - start, attempt, e)
+                await asyncio.sleep(1.0)
+                continue
+            size, took = sum(len(i.data) for i in images), time.monotonic() - start
+            log.info("camera: %.1f MB in %.1f s (%.1f Mbit/s)", size / 1e6, took, size * 8 / 1e6 / max(took, 1e-3))
+            return images
+        raise RuntimeError(f"could not download camera images: {last!r}") from last
+
     async def snapshot(self) -> Frame:
-        images, _ = await self.camera.get_images(timeout=self.cfg["rpc_timeout_s"])
+        images = await self._get_images()
         color = depth = None
         for img in images:
             if img.mime_type == CameraMimeType.VIAM_RAW_DEPTH:
