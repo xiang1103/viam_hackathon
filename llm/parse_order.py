@@ -1,6 +1,6 @@
 """Turn a natural-language request into a pick order using a local LLM (Ollama).
 
-    "I want 3 canada dry and 1 red bull"  ->  {"general_soda": 3, "energy_drink": 1}
+    "I want 3 canada dry and 1 red bull"  ->  {"ginger_ale": 3, "energy_drink": 1}
 
 Requires a running Ollama server (`ollama serve`) with the model pulled
 (`ollama pull qwen2.5:1.5b`). No API key: everything runs locally.
@@ -70,7 +70,8 @@ def _system_prompt(labels: dict[str, dict[str, str]]) -> str:
         "(only SPARKLING water is sparkling_water)\n"
         "- 'orange juice', 'apple juice', 'lemonade' -> not_supported "
         "(juice is not coconut_water)\n"
-        "- 'ginger ale', 'pepsi' -> general_soda"
+        "- 'ginger ale', 'canada dry' -> ginger_ale\n"
+        "- 'pepsi', 'sprite', 'root beer' -> non_listed_drinks"
     )
 
 

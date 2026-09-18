@@ -8,7 +8,7 @@ Requires a running Ollama server (`ollama serve`) with the model pulled
 Reference photos: every image in reference_pics/ is sent along with each crop as a
 labelled example of what that category looks like on our table. The category comes from
 the file or folder name: `coke.jpg`, `diet_coke/1.jpg`, or a brand like `canada_dry/x.jpg`
-(-> general_soda). Add more photos any time; they are loaded once per process.
+(-> ginger_ale). Add more photos any time; they are loaded once per process.
 
 Usage:
     python -m llm.classify_image crop1.jpg crop2.png ...

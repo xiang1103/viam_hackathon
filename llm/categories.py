@@ -19,7 +19,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
                   "'Coca-Cola' script and white wave ribbon. NOT silver, NOT black.",
     },
     "diet_coke": {
-        "order": "Diet Coke or Coke Zero (also 'diet coke', 'coke zero', 'sugar-free coke')",
+        "order": "Diet Coke or Coke Zero (also 'diet coke', 'coke zero', 'sugar-free coke'). If a coke can is not red, it is most likely a diet coke.",
         "visual": "Diet Coke: SILVER/grey can with the word 'Diet' and red 'Coke' lettering. "
                   "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'.",
     },
@@ -54,12 +54,20 @@ CATEGORIES: dict[str, dict[str, str]] = {
                   "and the words 'coconut water', e.g. Vita Coco (white/green), Zico, Harmless "
                   "Harvest (clear bottle, pink-tinted liquid).",
     },
-    "general_soda": {
-        "order": "any other soda / pop that is not Coca-Cola or Diet Coke ",
-        "visual": "Any other soft drink that is not a Coca-Cola product above, e.g. Pepsi "
-                  "(blue with red/white/blue globe), Sprite (green), Fanta (orange), Dr Pepper "
-                  "(maroon), Canada Dry ginger ale (green/white with gold crest), 7UP, "
-                  "Mountain Dew, A&W root beer, Mug, Schweppes.",
+    "ginger_ale": {
+        "order": "ginger ale of any brand, regular or zero sugar (also 'canada dry', "
+                 "'gingerale', 'ginger ale'; e.g. Canada Dry, Schweppes ginger ale, Seagram's)",
+        "visual": "Ginger ale: Canada Dry is a GREEN and WHITE can with a gold crest/shield "
+                  "and 'Canada Dry' in white script above 'Ginger Ale' (the zero sugar version "
+                  "is the same design). Also other ginger ales, e.g. Schweppes or Seagram's, "
+                  "with the words 'ginger ale'.",
+    },
+    "non_listed_drinks": {
+        "order": "any other soda / soft drink not listed above - not Coca-Cola, Diet Coke, "
+                 "ginger ale, water, sparkling water, energy drink or coconut water",
+        "visual": "Any other soft drink not listed above (not a Coca-Cola product or ginger ale), "
+                  "e.g. Pepsi (blue with red/white/blue globe), Sprite (green), Fanta (orange), "
+                  "Dr Pepper (maroon), 7UP, Mountain Dew, A&W root beer, Mug, Schweppes tonic.",
     },
 }
 
@@ -72,8 +80,9 @@ def catalog(kind: str) -> str:
 
 
 # Brand/product words, checked in this order (first match wins): unsupported
-# drinks first, coconut before water, other soda brands before diet_coke (so
-# "Diet Pepsi" is general_soda), diet_coke before coke, generic words last.
+# drinks first, coconut before water, ginger ale and other soda brands before
+# diet_coke (so "Diet Pepsi" is non_listed_drinks), diet_coke before coke,
+# generic words last.
 # Used on the request text (order parser) and on the text the VLM reads off the
 # container. Small models get the words right more often than the label, so
 # a keyword match overrides the model's label.
@@ -83,8 +92,12 @@ BRAND_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("sparkling_water", ("sparkling", "seltzer", "carbonated", "fizzy", "soda water",
                          "club soda", "lacroix", "la croix", "bubly", "perrier", "topo chico",
                          "pellegrino", "spindrift", "waterloo", "polar")),
-    ("general_soda", ("pepsi", "sprite", "fanta", "dr pepper", "dr. pepper", "canada dry",
-                      "7up", "7 up", "mountain dew", "a&w", "schweppes")),
+    # Before non_listed_drinks (so "Schweppes ginger ale" is ginger_ale) and before diet_coke
+    # (so "diet ginger ale" is not caught by "diet"). After sparkling_water, so
+    # "Canada Dry club soda" stays sparkling_water.
+    ("ginger_ale", ("canada dry", "ginger ale", "gingerale")),
+    ("non_listed_drinks", ("pepsi", "sprite", "fanta", "dr pepper", "dr. pepper",
+                           "7up", "7 up", "mountain dew", "a&w", "schweppes")),
     # Not "zero sugar" alone: Canada Dry and others print it too.
     ("diet_coke", ("diet coke", "coke zero", "coca-cola zero", "coca cola zero", "diet")),
     ("coke", ("coca-cola", "coca cola", "coke")),
@@ -93,7 +106,7 @@ BRAND_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("water", ("dasani", "aquafina", "fiji", "evian", "smartwater", "poland spring",
                "deer park", "voss", "essentia", "water")),
     # Not "cola": the VLM often reads only "Cola" off a Coca-Cola can.
-    ("general_soda", ("ginger ale", "root beer", "soda", "pop")),
+    ("non_listed_drinks", ("root beer", "soda", "pop")),
 ]
 # Sodas despite the name; replaced before matching so "beer" doesn't catch them.
 _SODA_ALIASES = {"root beer": "root_soda", "ginger beer": "ginger_soda"}

@@ -75,14 +75,14 @@ It runs entirely on this laptop through Ollama, so it needs no API key. It does 
 - **Categories are shared.** They live only in `llm/categories.py`, and both models read them from there:
   - `CATEGORIES`: each category has an `order` description (for the parser) and a `visual` description (for the VLM).
   - `BRAND_KEYWORDS`: ordered, first match wins, whole words only.
-  - The current categories are `coke`, `diet_coke`, `water`, `sparkling_water`, `energy_drink`, `coconut_water`, `general_soda`, and `not_supported`.
+  - The current categories are `coke`, `diet_coke`, `water`, `sparkling_water`, `energy_drink`, `coconut_water`, `ginger_ale`, `non_listed_drinks`, and `not_supported`.
   - To add a product, edit only this file.
 - Small models are wrong more often about labels than about words. So after the model answers, a brand keyword in the request text, or in the VLM's `visible_text`, overrides the model's label.
   - The plain "Coca-Cola" logo does not override a `diet_coke` answer.
   - Avoid generic keywords that other drinks share, such as `cola` or `zero sugar` alone.
 - The VLM answers `regular_coke` internally, and the code maps it back to `coke`. Under the strict schema the model confused `coke` with `coconut_water`, so don't rename it back.
 - `reference_pics/` is tracked in git. Every photo in it is sent with each crop, labelled with its category.
-  - The category comes from the file or folder name. That is either a category name (`coke.JPG`) or a brand that `BRAND_KEYWORDS` knows (`canada_dry/` → `general_soda`).
+  - The category comes from the file or folder name. That is either a category name (`coke.JPG`) or a brand that `BRAND_KEYWORDS` knows (`canada_dry/` → `ginger_ale`).
   - `num_ctx` grows with the number of photos, about 1200 tokens per image. Ollama's default of 4096 fails with even a few photos.
 - Output: each command writes `data/scans/<timestamp>/`, which is git-ignored. It holds `picture.jpg`, `detected.jpg`, `crops/NN.jpg`, `results.json`, and `order.json`.
   - With `--camera`, the depth frame is also saved to `data/frames/`, for the 3D grasp later.
