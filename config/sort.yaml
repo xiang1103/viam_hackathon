@@ -17,6 +17,8 @@ modes:
   label: &label
     classifier: local_vlm
     view: scan
+    survey_crop: false       # the survey now looks down on the lids (poses.yaml): its crop shows no label, so a can seen in
+                             # the scan picture is read from that crop alone. true = send both crops, as with the tilted survey
     min_confidence: 0.6      # the reader's high = 0.9, medium = 0.7, low = 0.4 -> low goes to reject
     crop_pad: 0.08           # each box grown by this per side, and ...
     min_crop_side: 640       # ... enlarged to at least this, before it is sent (as scan_drinks.py does)

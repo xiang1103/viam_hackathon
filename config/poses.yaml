@@ -17,7 +17,16 @@ named:
   # read back as a gripper pose on 2026-09-18: all 11 cans in view, upright in the picture, YOLO 11/11. From
   # WATCH_POSE the cans sit sideways at the picture's left edge behind the arm's cable and YOLO found 2.
   # depth_scale and gripper.xy_offset were measured from this pose: grasps planned from another pose miss.
-  survey: {x: 92.2, y: -164.8, z: 571.6, o_x: 0.490, o_y: -0.333, o_z: -0.806, theta: 156.9}
+  # Since 2026-09-19 13:05: a higher, flatter view, COMPUTED from the arm's kinematics and then stood at - the arm
+  # landed on it exactly (camera at (326, -355, 713), joints [-46.3, 7.7, -135.2, 7.6, 119.9, 47.6], joint 1 a whole
+  # turn round). It looks 10 deg off straight down over the middle of the can area: cans are seen 10 deg (middle)
+  # to 29 deg (corners) off vertical, against 35 to 49 deg from the old tilted view, so a height error moves a
+  # position half as far and every lid is seen whole. Straight down cannot see the whole can area from any
+  # height the arm reaches. From here YOLO needs the "round metal object" prompt (machine.yaml).
+  # gripper.xy_offset was measured from the OLD view: re-measure it (scripts/02_hover_test.py).
+  survey: {x: 308.2, y: -282.2, z: 623.0, o_x: 0.171, o_y: -0.014, o_z: -0.985, theta: -94.9}
+  # The old survey (Xiang's `cans_view` joints), kept to go back to: copy it over `survey`.
+  survey_tilted: {x: 92.2, y: -164.8, z: 571.6, o_x: 0.490, o_y: -0.333, o_z: -0.806, theta: 156.9}
   # Where LABELS are read from in `--mode label` (sort.yaml view: scan): Xiang's `cam_lower_pos`
   # (config/joint_positions.json), re-taught by hand on 2026-09-19 (third time) and read back from the arm as a gripper
   # pose in arm_origin. Lower and closer, so each can covers more pixels. Only its picture is used - for
@@ -36,5 +45,8 @@ named:
 # 42.9, 58.7, -107.8], it is kept as [-79.7, -16.5, -42.6, -317.1, 58.7, 252.2] - the same pose, joints 1, 4
 # and 6 a whole turn round - so a trip turns every joint at most ~167 degrees (not 372 on the base).
 joint_moves:
-  poses: {survey: cans_view, scan: cam_lower_pos}
+  # `survey: cans_view` removed 2026-09-19: `survey` is now the top view, and cans_view's joint angles are the OLD
+  # tilted view - a joint move "to survey" would have gone there. With one pose listed no joint move happens;
+  # to get it back, jog scan -> survey once, save the survey joints in joint_positions.json and list them here.
+  poses: {scan: cam_lower_pos}
   tolerance_deg: 3

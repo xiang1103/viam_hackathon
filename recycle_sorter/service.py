@@ -98,8 +98,9 @@ class MyGenericService(GenericService, EasyResource):
             await place_at(m, s["x"], s["y"], s["frame_z"] - offset, s["theta"])
             return {"success": True}
         if action in ("reset", "go-to-survey"):
-            # Back to the pose the camera surveys the table from, through the motion planner.
-            await m.goto_named("survey")
+            # Back to the pose the camera surveys the table from, through the motion planner
+            # ("pose": another named pose from poses.yaml, e.g. a survey pose being tried out).
+            await m.goto_named(str(command.get("pose") or "survey"))
             return {"success": True}
         if action == "open-gripper":
             await m.open()

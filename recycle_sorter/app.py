@@ -19,7 +19,7 @@ from .io.robot import LiveRobot
 from .manipulation.pickplace import grasp_pose, pick, place
 from .manipulation.safety import UnsafeTarget
 from .perception.segment import draw, segment, zone_outline_px
-from .perception.select import choose_next
+from .perception.select import choose_next, why_left
 from .policy.piles import PileLayout
 from .policy.sort_policy import SortPolicy
 from .policy.zones import resolve
@@ -208,10 +208,19 @@ async def run_sort(
     failures = 0
     planned = False
     queue: list[tuple[ObjectObservation, Classification]] = []  # seen in the last picture, not yet picked
+    expected: int | None = None  # items the next look should still find: seen at the last look, minus picked since
 
     async def take_a_look() -> list[tuple[ObjectObservation, Classification]]:
         """Go to the survey pose, take one picture, and return what is in the unsorted zone."""
-        nonlocal workspace, layout, planned
+        nonlocal workspace, layout, planned, expected
+        needs_scan = getattr(classifier, "needs_scan", False)
+        scan = None
+        if needs_scan and workspace["pick"].get("scan_first", False) and expected != 0:
+            # Labels first, positions last: the arm then goes from the survey straight to the pick, on
+            # positions measured a moment ago. Not on a look that expects an empty table (everything
+            # seen last time has been picked): that one goes to the survey alone, as before.
+            await robot.manip.goto_named("scan")
+            scan = await robot.snapshot()
         await robot.manip.goto_named("survey")
         frame = await robot.snapshot()
         if layout is None:
@@ -226,17 +235,19 @@ async def run_sort(
             layout = PileLayout(workspace, robot.manip.poses)
             layout.validate()
         objects = await robot.detect(frame)
+        expected = len(objects)
         if pictures is None:
             save_frame(frame, objects=objects if record_objects else None)
         if not objects:
             if pictures is not None:  # still show what YOLO found and why none of it became an item
                 save_survey_picture(frame, [], [], getattr(robot, "last_rejected", []), "survey", workspace, pictures)
             return []
-        if getattr(classifier, "needs_scan", False) and objects:
+        if needs_scan and objects:
             # Second look, from eye level: WHERE things are came from above, WHAT they are is on
             # their side. Items hidden behind others come back deferred, to be read on a later look.
-            await robot.manip.goto_named("scan")
-            scan = await robot.snapshot()
+            if scan is None:
+                await robot.manip.goto_named("scan")
+                scan = await robot.snapshot()
             scan.timestamp = f"{frame.timestamp}-scan"
             if pictures is None:
                 save_frame(scan)
@@ -331,7 +342,9 @@ async def run_sort(
             target = choose_next([o for o, _ in queue], workspace, blacklist)
         if target is None:
             if fresh or look == "once":
-                log.warning("%d object(s) left but none graspable (too wide or given up on)", len(queue))
+                log.warning("%d item(s) left on the table, none of which can be picked:", len(queue))
+                for o, r in queue:
+                    log.warning("  %s at (%.0f, %.0f): %s", r.label, *o.centroid, why_left(o, workspace, blacklist) or "no reason found")
                 break
             queue = []  # the picture is old: look again before giving up
             continue
@@ -363,6 +376,7 @@ async def run_sort(
 
         failures = 0
         sorted_counts[key] += 1
+        expected = max((expected or 1) - 1, 0)
         if wanted is not None:
             remaining[policy.pile_key(result)] -= 1
             queue = [(o, r) for o, r in queue if remaining[policy.pile_key(r)] > 0]

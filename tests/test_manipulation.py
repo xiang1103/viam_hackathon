@@ -39,6 +39,17 @@ def test_grasp_never_goes_below_table_clearance(workspace):
     assert z >= TABLE_TOP + workspace["bounds"]["z_min_above_table"]
 
 
+def test_upright_round_item_gets_the_fixed_wrist_angle(workspace):
+    workspace["gripper"].update(upright_theta=0, upright_min_height=80, yaw_offset_deg=0)
+    can = [{"x": 400, "y": 0, "l": 66, "w": 66, "h": 122, "yaw": 37, "color": "red"}]
+    block = [{"x": 400, "y": 0, "l": 60, "w": 30, "h": 30, "yaw": 37, "color": "red"}]
+    can_obs, block_obs = (segment(make_frame(s), workspace)[0] for s in (can, block))
+    assert grasp_pose(can_obs, workspace)[3] == 0  # whatever yaw was measured off its lid
+    assert grasp_pose(block_obs, workspace)[3] == block_obs.yaw_deg != 0  # a block still has a short axis
+    workspace["gripper"]["upright_theta"] = None
+    assert grasp_pose(can_obs, workspace)[3] == can_obs.yaw_deg
+
+
 async def test_dry_run_pick_and_place_sequence(workspace, caplog):
     caplog.set_level("INFO")
     obs = segment(make_frame(SCENE[:1]), workspace)[0]

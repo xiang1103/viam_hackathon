@@ -34,6 +34,9 @@ async def main() -> None:
         help="one-off action, no camera: `reset` returns the arm to the survey pose, `open-gripper` "
         "releases whatever it holds; the rest are blind fixed-pose motion checks (same poses as move_arm.py)",
     )
+    ap.add_argument("--pose", metavar="NAME", default="survey",
+                    help="--action reset: the named pose (config/poses.yaml) to go to instead of `survey`, "
+                    "e.g. to try a new survey pose before making it the survey")
     args = ap.parse_args()
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
@@ -46,7 +49,7 @@ async def main() -> None:
         await run_replay(args.replay, args.mode)
         return
     if args.action:
-        print("Result:", await run_local({"action": args.action}, dry_run=args.dry_run, step=args.step))
+        print("Result:", await run_local({"action": args.action, "pose": args.pose}, dry_run=args.dry_run, step=args.step))
         return
 
     wanted = None

@@ -10,6 +10,29 @@ from ..types import ObjectObservation
 log = logging.getLogger(__name__)
 
 
+def why_left(
+    o: ObjectObservation, workspace: dict[str, Any], blacklist: list[np.ndarray] | None = None, blacklist_radius: float = 40.0
+) -> str:
+    """Why choose_next will not pick this item, in words for the log ("" = it can be picked)."""
+    from ..manipulation.pickplace import grasp_pose
+    from ..manipulation.safety import UnsafeTarget, check_target
+
+    x, y, z, _ = grasp_pose(o, workspace)
+    reach = workspace["pick"].get("max_reach", workspace["sorted_layout"]["max_reach"])
+    if np.hypot(x, y) > reach:
+        return f"out of reach: {np.hypot(x, y):.0f} mm from the arm base, the limit is {reach} - move it closer"
+    try:
+        check_target(x, y, z + workspace["pick"]["approach"], workspace, workspace["pick"].get("y_min"))
+    except UnsafeTarget as e:
+        return f"outside the workspace bounds ({e})"
+    width, max_open = o.grasp_width or o.width, workspace["gripper"]["max_open"]
+    if width >= max_open - 5:
+        return f"too wide for the gripper: {width:.0f} mm across, it opens {max_open}"
+    if any(np.linalg.norm(o.centroid - b) < blacklist_radius for b in (blacklist or [])):
+        return "given up on after failed grasps"
+    return ""
+
+
 def choose_next(
     objects: list[ObjectObservation],
     workspace: dict[str, Any],

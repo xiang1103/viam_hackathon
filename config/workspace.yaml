@@ -91,6 +91,25 @@ segmentation:
   color_delta: 22      # how different (LAB) from the table's own color a blob must look to count...
   tall_height: 40      # ...unless it stands this tall: clear of depth noise even if table-colored
   max_object_dim: 260  # larger segments are depth noise or table edges, not an item (a water bottle is ~210)
+  # YOLO path only: a box whose item stands lower than this is dropped ("too low for a can"). The
+  # "round metal object" prompt that finds lids from above also boxed a 32 mm charger cable at the table's edge
+  # (2026-09-19), inside the zone and within reach. A can lying down is 66 mm. 0 = keep everything.
+  min_item_height: 50
+
+# Where a STANDING CAN is, from its outline in the colour picture instead of from its depth points
+# (perception/silhouette.py; YOLO path only, items that pass gripper.upright_min_height). Depth drops out on
+# a shiny lid - a different half of it in every picture - and the lid's centre jumped with it: 18 mm between
+# two pictures of an untouched can on 2026-09-19, which is why grasps were off-centre one run and fine the
+# next. The outline fit moved 0.2-0.8 mm on the same pictures and sat 3 mm from a depth-free close-up.
+# The depth position is kept when the fit is poor (min_iou) or lands far from it (max_shift, mm).
+silhouette:
+  enabled: true
+  min_iou: 0.75
+  max_shift: 35
+  start_radius: 33     # a 12 oz can; the fit adjusts it within `radius`
+  radius: [20, 60]
+  lid_ratio: 0.8       # lid rim radius / body radius, and how far below the top the full body width starts
+  shoulder: 12
 
 gripper:
   # Distance from the gripper FRAME ORIGIN (what motion.move positions) down to the
@@ -108,8 +127,19 @@ gripper:
   # depends on it.) If the grip now lands on the tapered shoulder, go back toward 28-30.
   # 2026-09-19: cans are now full (heavier) and 25 grabbed too high -> 33, on the straight wall. Keep it
   # under ~37, where the gripper's palm reaches the lid.
-  finger_depth: 33
+  # 2026-09-19 13:45, first picks from the top-view survey: the can was held, but about a third of the finger
+  # was still above the lid -> 44 (33 x 4/3). The earlier "palm reaches the lid at ~37" was judged from the old
+  # tilted survey, whose can tops read several mm off. If the palm now touches the lid, come back 3-4 mm.
+  finger_depth: 44
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
+  # Wrist angle for upright round items (standing cans: at least upright_min_height tall, footprint no longer
+  # than max_open + 10). A round lid has no short axis, so its measured yaw is noise: on saved pictures the
+  # same untouched cans came out anywhere from -78 to +89 degrees, and changed between two pictures. The wrist
+  # spun to a new angle for every can, and anything the fingers sit off the gripper frame's axis swung round
+  # with it, so no single xy_offset could centre every pick. 0 is the angle of the proven static poses
+  # (poses.yaml). Re-measure xy_offset at this angle. Set to null to go back to the measured yaw.
+  upright_theta: 0
+  upright_min_height: 80
   # Added to every grasp point (mm, arm frame: +x = away from the arm, +y = toward the power strip side).
   # If the hover test leaves the gripper N mm short of the can, that is +N in x; N mm toward -y of it, +N in y.
   # Measured 2026-09-18 from a close-up taken while hovering over a can (lid circle vs gripper axis, no depth
@@ -117,7 +147,12 @@ gripper:
   # 2026-09-18 evening, survey back at cans_view: grasps landed toward the power strip (+y) of the can with
   # y = -7 (~10 mm), and still well toward it with -17, so y -> -27. Direction check: gripper on the
   # power-strip side of the can = lower y; on the far side = raise y.
-  xy_offset: [9, -27]
+  # 2026-09-19: y -> 0. The -27 was tuned by eye from the old tilted survey, while the wrist came down at a random
+  # angle on every pick and the can's centre jumped with the depth holes on its lid - both fixed since
+  # (upright_theta, silhouette). From the top-view survey a close-up of a lid and the survey agreed to ~3 mm, so
+  # no y correction is expected. x -> 0 too (was 9, measured from the old survey): start clean from the top
+  # view and add back only what the hover test shows.
+  xy_offset: [0, 0]
 
 pick:
   approach: 150        # standoff above the grasp / release height before descending (as move_arm.py)
@@ -132,6 +167,10 @@ pick:
   # How often to take a new picture: once | when_needed | every_pick (see run_sort). Each one
   # is a camera download, which can take ~30 s on a slow link. --look on the CLI overrides it.
   look: when_needed
+  # Modes that read labels from the `scan` pose (sort.yaml view: scan): take the scan picture FIRST and the
+  # survey picture last, so the arm goes from the survey straight to the pick on positions measured a moment
+  # ago. false = survey first, as before.
+  scan_first: true
   disturb_clearance: 30  # when_needed: a neighbour closer than this (edge to edge) triggers a new picture
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan
   # Limits for PICKING only; pile placement keeps bounds.y and sorted_layout.max_reach, so piles are never

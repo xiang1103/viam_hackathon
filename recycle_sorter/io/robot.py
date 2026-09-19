@@ -117,14 +117,14 @@ class LiveRobot:
 
     async def _get_images(self):
         """Color + raw depth is by far the largest transfer in a run, so it gets its own timeout and a retry."""
-        timeout, last = self.cfg.get("image_timeout_s", 90), None
-        for attempt in (1, 2, 3):
+        timeout, attempts, last = self.cfg.get("image_timeout_s", 90), int(self.cfg.get("image_attempts", 3)), None
+        for attempt in range(1, attempts + 1):
             start = time.monotonic()
             try:
                 images, _ = await self.camera.get_images(timeout=timeout)
             except Exception as e:
                 last = e
-                log.warning("camera download failed after %.1f s (attempt %d/3): %r", time.monotonic() - start, attempt, e)
+                log.warning("camera download failed after %.1f s (attempt %d/%d): %r", time.monotonic() - start, attempt, attempts, e)
                 await asyncio.sleep(1.0)
                 continue
             size, took = sum(len(i.data) for i in images), time.monotonic() - start

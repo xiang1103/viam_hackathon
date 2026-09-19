@@ -13,6 +13,7 @@ import numpy as np
 from ..config import ROOT
 from ..types import Frame, ObjectObservation
 from .segment import finish, in_unsorted_zone, level, observe
+from .silhouette import fit_upright, is_upright
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +161,25 @@ def _own_top(blob: np.ndarray, height: np.ndarray, top_band: float) -> np.ndarra
     return blob & ~(top & ~near_own)
 
 
+def _centre_on_silhouette(o: ObjectObservation, b: Box, frame: Frame, workspace: dict[str, Any]) -> None:
+    """A standing can's position from its outline in the colour picture (perception/silhouette.py)
+    instead of from its depth points, which drop out on a shiny lid. The depth answer is kept when
+    there is no mask, the outline fits the mask badly (a can lying down, two cans in one mask), or
+    the fit wandered off."""
+    cfg = workspace.get("silhouette") or {}
+    if not cfg.get("enabled", False) or b.mask is None or not is_upright(o, workspace):
+        return
+    fit = fit_upright(frame, b.mask, o.centroid, o.top_z, workspace)
+    if fit is None:
+        return
+    xy, _, iou = fit
+    moved = float(np.linalg.norm(xy - o.centroid))
+    if iou < cfg.get("min_iou", 0.75) or moved > cfg.get("max_shift", 35.0):
+        log.info("item at (%.0f, %.0f): silhouette fit not used (IoU %.2f, %.0f mm away)", *o.centroid, iou, moved)
+        return
+    o.centroid, o.grasp_xy = xy.copy(), xy.copy()
+
+
 def observations_from_boxes(
     boxes: list[Box], frame: Frame, workspace: dict[str, Any], rejected: list[tuple[Box, str]] | None = None
 ) -> list[ObjectObservation]:
@@ -198,11 +218,15 @@ def observations_from_boxes(
         if o is None:
             rejected.append((b, "too few depth points"))
             continue
+        if o.height < seg.get("min_item_height", 0):
+            rejected.append((b, "too low for a can"))  # a cable, a charger: what a loose prompt also boxes
+            continue
         # The label is on the can's side, which the depth blob may only partly cover: keep
         # YOLO's whole box as the picture of the item.
         o.bbox = (b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)
         o.crop = frame.color[b.y0 : b.y1, b.x0 : b.x1].copy()
         o.detection_confidence = b.confidence
+        _centre_on_silhouette(o, b, frame, workspace)
         found.append((b, o))
     kept = finish([o for _, o in found], workspace)
     for b, o in found:
