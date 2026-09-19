@@ -125,6 +125,9 @@ async def main() -> None:
     # (shared_detector); an order that arrives before it is ready waits for it rather than loading twice.
     machine_cfg = load_yaml("machine.yaml")
     if machine_cfg.get("perception") == "yolo":
+        # Silent like the Ollama warm-up: ultralytics' own messages (settings, downloads) would land in
+        # the `command>` prompt. Read by ultralytics when it is imported, i.e. in the thread below.
+        os.environ.setdefault("YOLO_VERBOSE", "False")
         def warm_yolo() -> None:
             try:
                 shared_detector(machine_cfg["yolo"]).warm_up()

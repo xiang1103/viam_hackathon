@@ -49,10 +49,13 @@ class YoloDetector:
             return self._load()
 
     def warm_up(self) -> None:
-        """Load the model and run it once (the first prediction is ~1 s slower than later ones)."""
-        self.detect(np.full((64, 64, 3), 200, np.uint8))
+        """Load the model and run it once (the first prediction is ~1 s slower than later ones).
+        Silent: it runs in the background while the user types at a prompt."""
+        with self._lock:
+            self._load(quiet=True)
+            self._detect(np.full((64, 64, 3), 200, np.uint8))
 
-    def _load(self):
+    def _load(self, quiet: bool = False):
         if self._model is None:
             try:
                 import ultralytics
@@ -93,7 +96,8 @@ class YoloDetector:
             else:
                 model = ultralytics.YOLO(str(weights))
             self._model = model
-            log.info("loaded %s model %s", kind, weights)
+            if not quiet:
+                log.info("loaded %s model %s", kind, weights)
         return self._model
 
     def detect(self, image_bgr: np.ndarray) -> list[Box]:
