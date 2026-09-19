@@ -57,6 +57,7 @@ class Manipulator:
         self.normal_speed = machine_cfg.get("arm_speed")
         self.dry_run, self.step = dry_run, step
         self.joints = joints or {}  # config/joint_positions.json: taught joint angles by name, degrees
+        self._jaws_open = False  # True only after our own open(): lets a pick skip opening jaws that are open
 
     def _world_state(self, obstacles: list[dict[str, Any]]) -> WorldState | None:
         """Extra obstacles for the planner (workspace.yaml `obstacles`), boxes in the reference frame."""
@@ -170,12 +171,21 @@ class Manipulator:
             await self.set_speed(self.normal_speed)
 
     async def open(self) -> None:
+        """Open the jaws - unless this Manipulator opened them last and has not closed them since.
+
+        gripper.open() blocks ~2 s even when the jaws already are open, and every pick starts with
+        one right after the place before it ended with one: 2 s of standing still between cans.
+        The first open of a run always happens: the jaws' state is not known then."""
+        if self._jaws_open:
+            return
         await self._confirm("open gripper")
         if not self.dry_run:
             await self.gripper.open(timeout=self.timeout)
+        self._jaws_open = True
 
     async def grab(self) -> bool:
         await self._confirm("grab")
+        self._jaws_open = False  # closed from here on, whether or not something is held
         if self.dry_run:
             return True
         # UFactory grab() blocks until the jaws finish and returns whether something

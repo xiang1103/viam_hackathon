@@ -297,3 +297,21 @@ async def test_without_taught_joints_every_named_move_is_planned(workspace):
     m.arm = arm
     await m.goto_named("scan")
     assert arm.moves == [] and len(motion.calls) == 1
+
+
+async def test_jaws_that_are_already_open_are_not_opened_again(workspace):
+    """A place ends with the jaws open, so the next pick goes straight to its can (open() blocks ~2 s)."""
+    from recycle_sorter.manipulation.pickplace import pick_at, place_at
+
+    gripper = FakeGripper()
+    m = live_manipulator(workspace, FakeMotion(), gripper)
+    for _ in range(2):
+        assert await pick_at(m, 400, 0, TABLE_TOP + 40)
+        await place_at(m, 300, 100, TABLE_TOP + 40)
+    assert gripper.events == ["open", "grab", "open", "grab", "open"]
+
+    gripper = FakeGripper(holds=False)  # a grab that closed on nothing still leaves the jaws closed
+    m = live_manipulator(workspace, FakeMotion(), gripper)
+    await pick_at(m, 400, 0, TABLE_TOP + 40)
+    await pick_at(m, 300, 0, TABLE_TOP + 40)
+    assert gripper.events == ["open", "grab", "open", "grab"]
