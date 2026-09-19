@@ -25,8 +25,8 @@ async def main() -> None:
     ap.add_argument("--order", metavar="TEXT",
                     help='the same, in words: --order "2 cokes and a sparkling water" (llm/parse_order.py, needs Ollama)')
     ap.add_argument("--cam-pos", action="store_true",
-                    help="survey from the original, higher camera position (poses.yaml cam_pos) instead of "
-                    "the default lower one (cam_lower_pos)")
+                    help="--mode label: read labels from the survey picture too, skipping the closer "
+                    "`scan` picture (mode label_cam_pos)")
     ap.add_argument("--replay", type=Path, metavar="DIR", help="run perception over saved frames; no robot")
     ap.add_argument(
         "--action",
@@ -64,9 +64,9 @@ async def main() -> None:
         if not wanted:
             return
 
+    if args.cam_pos and args.mode == "label":
+        args.mode = "label_cam_pos"
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
-    if args.cam_pos:
-        robot.manip.poses["named"]["survey"] = robot.manip.poses["named"]["cam_pos"]
     try:
         # In dry-run nothing moves, so one picture gives the whole plan.
         counts = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look, look_only=args.look_only, wanted=wanted)

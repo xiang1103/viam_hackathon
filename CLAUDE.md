@@ -64,11 +64,12 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
 - `pipeline.py` is a front end on top of `recycle_sorter`. For each command:
   1. `llm/parse_order.py` (`qwen2.5:1.5b`) turns the text into `{category: count}` plus a list of `not_supported` items.
      The result is written to `data/orders/<timestamp>.json` as `command`, `items`, and `not_supported`.
-  2. It asks `fetch this? [Y/n]` before the arm moves. `--yes` skips the question, and `--dry-run` never asks.
+  2. No confirmation: the arm starts fetching as soon as the order is parsed. Use `--step` or `--dry-run` to check first.
   3. `run_sort(robot, "label", wanted=items)` does the rest: survey picture, YOLO boxes, the local VLM label for each crop (`classify/label_vlm.py` → `llm/classify_image.py`), then pick and place, surest reads first, one pile per category.
   4. `result`, `fetched`, and `missing` are added to the same JSON, or `error` if the run failed. The prompt then returns for the next command.
-  5. The last annotated picture (boxes and labels) is copied to `data/scans/<timestamp>.png`, the same timestamp as the order JSON, and its path is recorded as `picture`.
-     `run_sort` draws every picture it takes as `data/debug/<frame timestamp>.png`. Nothing else is saved: no crops and no per-box results.
+  5. The last annotated survey picture (boxes and labels) is copied to `data/scans/<timestamp>.png`, the same timestamp as the order JSON, and its path is recorded as `picture`.
+     The last scan picture, with each can's crop box, is copied to `<timestamp>-scan.png` (`scan_picture`).
+     `run_sort` draws every picture it takes in `data/debug/`. Nothing else is saved: no crops and no per-box results.
   - The robot connects once per session. Ctrl-C stops the arm, the same way the CLI does.
 - Run it:
   - `python pipeline.py` prompts for commands, and **the arm moves**.
@@ -76,8 +77,13 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
   - `python pipeline.py --dry-run` plans and logs the moves without moving anything.
     Dry-run skips the move to `survey`, so its picture is taken from wherever the arm is. When the arm is not at `survey`, the zone or layout can fail with errors like "no room for sorted piles".
   - `python pipeline.py "2 cokes"` runs one command and exits.
-  - The survey position defaults to the lower `cam_lower_pos`: `poses.yaml` → `named.survey`, which puts more pixels on each label.
-    `--cam-pos` uses the original, higher `cans_view` pose (`named.cam_pos`) instead. `recycle_sorter.cli` has the same flag.
+  - Two pictures per look in `--mode label` (`sort.yaml` → `view: scan`):
+    - **Positions**, and so every grasp, come from `survey`, the original `cans_view` pose. `depth_scale` and `gripper.xy_offset` were measured there.
+      Planning grasps from the lower pose made every grab miss on 2026-09-18.
+    - **Labels** come from `scan`, the lower `cam_lower_pos` pose, where each can has more pixels.
+      Each can's 3D box from the survey is projected into the scan picture to cut its crop (`perception/scan.py`, `LocalLabelClassifier.classify_scan`).
+      A can hidden behind a nearer one there is deferred to a later look, and a can that hasn't moved keeps its last read.
+    - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
     The joint angles are in `config/joint_positions.json`, but the code always moves to the stored gripper poses through the planner, never to raw joint angles.
   - The same arm path without the prompt: `python -m recycle_sorter.cli --mode label --order "..."` or `--want coke=2`.
   - The image half only, with no arm: `python scan_drinks.py --camera|<pic>`. It writes `data/scans/<timestamp>/` with `picture.jpg`, `detected.jpg`, `crops/`, and `results.json`.

@@ -12,12 +12,19 @@ modes:
   # API key. Needs Ollama running with the vision model pulled - on this laptop, or on a teammate's with
   # OLLAMA_URL=http://<their-ip>:11434 in .env. The piles are the categories in llm/categories.py;
   # the photos in reference_pics/ are sent along as examples.
-  label:
+  # view: scan = positions from the `survey` picture (the pose the grasp calibration was measured at), labels
+  # from a second, closer picture at the `scan` pose (poses.yaml). One extra move + picture per look.
+  label: &label
     classifier: local_vlm
+    view: scan
     min_confidence: 0.6      # the reader's high = 0.9, medium = 0.7, low = 0.4 -> low goes to reject
     crop_pad: 0.08           # each box grown by this per side, and ...
     min_crop_side: 640       # ... enlarged to at least this, before it is sent (as scan_drinks.py does)
     groups: {}
+  # The same, reading labels from the survey picture itself: one picture per look (--cam-pos).
+  label_cam_pos:
+    <<: *label
+    view: survey
 
   # Cans and bottles, read off their labels by Claude. Needs ANTHROPIC_API_KEY in .env.
   brand:

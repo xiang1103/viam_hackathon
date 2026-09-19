@@ -13,12 +13,14 @@ static:
 # Re-teach any of them with: python scripts/01_teach_pose.py survey
 # `home` falls back to `survey` until it is taught.
 named:
-  # DEFAULT survey: Xiang's `cam_lower_pos` (config/joint_positions.json), read back from the arm (sitting at
-  # exactly those joints) as a gripper pose in arm_origin on 2026-09-18. Lower and closer than cam_pos, so
-  # each can covers more pixels and the label reader has more to read.
-  survey: {x: 36.8, y: -327.4, z: 451.9, o_x: 0.740, o_y: 0.212, o_z: -0.638, theta: -144.2}
-  # The original survey, used instead with --cam-pos: Xiang's `cans_view` (config/joint_positions.json), read
-  # back as a gripper pose on 2026-09-18: all 11 cans in view, upright in the picture, YOLO 11/11. From
+  # Where every POSITION (and so every grasp) comes from. Xiang's `cans_view` (config/joint_positions.json),
+  # read back as a gripper pose on 2026-09-18: all 11 cans in view, upright in the picture, YOLO 11/11. From
   # WATCH_POSE the cans sit sideways at the picture's left edge behind the arm's cable and YOLO found 2.
-  cam_pos: {x: 92.2, y: -164.8, z: 571.6, o_x: 0.490, o_y: -0.333, o_z: -0.806, theta: 156.9}
+  # depth_scale and gripper.xy_offset were measured from this pose: grasps planned from another pose miss.
+  survey: {x: 92.2, y: -164.8, z: 571.6, o_x: 0.490, o_y: -0.333, o_z: -0.806, theta: 156.9}
+  # Where LABELS are read from in `--mode label` (sort.yaml view: scan): Xiang's `cam_lower_pos`
+  # (config/joint_positions.json), read back from the arm (sitting at exactly those joints) as a gripper pose
+  # in arm_origin on 2026-09-18. Lower and closer, so each can covers more pixels. Only its picture is used -
+  # for what the cans ARE; where they are still comes from `survey`.
+  scan: {x: 36.8, y: -327.4, z: 451.9, o_x: 0.740, o_y: 0.212, o_z: -0.638, theta: -144.2}
   watch: {x: 197.46, y: 0.14, z: 616.44, o_x: 0.3746, o_y: 0.0008, o_z: -0.9272, theta: -4.12}   # move_arm.py's WATCH_POSE

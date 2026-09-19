@@ -269,3 +269,36 @@ async def test_local_label_reader_maps_its_answers_to_piles():
     piles = [policy.pile_key(await classifier.classify(can, None)) for _ in range(3)]
     assert piles == ["diet_coke", REJECT, REJECT]  # sure -> its pile; unsure or not a drink -> reject
     assert all(j[:2] == b"\xff\xd8" for j in sent)  # JPEG bytes, as the reader expects
+
+
+async def test_local_label_reader_reads_labels_from_the_scan_picture(workspace):
+    """view: scan - crops come from the closer scan picture; a hidden can is deferred, not misread,
+    and a can that has not moved since the last look is not read again (~10 s per read)."""
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+
+    sent = []
+
+    def read(jpeg: bytes):
+        sent.append(jpeg)
+        return SimpleNamespace(label="coke", confidence="high", visible_text="Coca-Cola", closest_reference="coke")
+
+    clf = LocalLabelClassifier({"view": "scan"}, read=read)
+    assert clf.needs_scan
+    near, behind, beside = can(350, 0), can(520, 0), can(400, 150)
+    frame = eye_level_frame()
+    results = await clf.classify_scan([behind, near, beside], frame, frame, workspace)
+    assert [r.label for r in results] == ["unseen", "coke", "coke"]
+    assert results[0].meta["defer"] and len(sent) == 2 and len(clf.last_views) == 3
+
+    near_again = can(352, 1)  # the same can, re-measured on the next look
+    again = await clf.classify_scan([near_again], frame, frame, workspace)
+    assert again[0].label == "coke" and len(sent) == 2  # remembered, not sent again
+
+
+def test_label_mode_reads_from_the_scan_pose_unless_cam_pos():
+    from recycle_sorter.app import make_classifier
+
+    sort_cfg = load_yaml("sort.yaml")
+    assert make_classifier("label", sort_cfg).needs_scan
+    assert not make_classifier("label_cam_pos", sort_cfg).needs_scan
+    assert "scan" in load_yaml("poses.yaml")["named"]
