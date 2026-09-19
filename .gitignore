@@ -16,7 +16,6 @@ __pycache__/
 venv/
 
 # Recorded frames and debug overlays
-data/
 
 # Downloaded model weights (the YOLOE text encoder alone is 600 MB)
 models/

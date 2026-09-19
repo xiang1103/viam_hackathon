@@ -1,0 +1,32 @@
+[
+  {
+    "time": "14:50:36",
+    "command": "can I have two coke",
+    "order": {
+      "coke": 2
+    },
+    "not_available": [],
+    "fetched": {
+      "coke": 2
+    },
+    "missing": {}
+  },
+  {
+    "time": "14:54:21",
+    "command": "can I have one coke, one ginger ale and a energy drink",
+    "order": {
+      "coke": 1,
+      "ginger_ale": 1,
+      "energy_drink": 1
+    },
+    "not_available": [],
+    "fetched": {
+      "energy_drink": 1,
+      "coke": 1,
+      "reject": 1
+    },
+    "missing": {
+      "ginger_ale": 1
+    }
+  }
+]
