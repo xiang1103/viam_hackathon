@@ -25,7 +25,7 @@ bounds:
                          # 20 (was 50) admits the lower survey (cam_lower_pos, x = 37), which the arm has stood at
   frame_z_max: 750
   named_y_min: -500      # taught poses may reach past the pick limit toward -y (table ends ~ -530): the
-                         # hand-taught scan pose (cam_lower_pos, 2026-09-19) sits at y = -487
+                         # hand-taught scan pose (cam_lower_pos, re-taught 2026-09-19) sits at y = -308
 
 # Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
 # the table: "front" = you face the arm (arm at top), "behind" = you stand behind it
@@ -95,6 +95,9 @@ segmentation:
   # "round metal object" prompt that finds lids from above also boxed a 32 mm charger cable at the table's edge
   # (2026-09-19), inside the zone and within reach. A can lying down is 66 mm. 0 = keep everything.
   min_item_height: 50
+  # YOLO path only: boxes whose items stand closer than this (mm, centre to centre) are one can boxed twice
+  # (lid and whole can, by different prompts); the surer box is kept. A slim can is 53 mm across.
+  same_item_mm: 40
 
 # Where a STANDING CAN is, from its outline in the colour picture instead of from its depth points
 # (perception/silhouette.py; YOLO path only, items that pass gripper.upright_min_height). Depth drops out on

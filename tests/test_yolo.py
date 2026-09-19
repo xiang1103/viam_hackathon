@@ -117,3 +117,14 @@ def test_a_low_thing_in_a_box_is_not_an_item(workspace):
     rejected = []
     assert observations_from_boxes([box_around(cable)], make_frame([cable]), workspace, rejected) == []
     assert [why for _, why in rejected] == ["too low for a can"]
+
+
+def test_one_can_boxed_twice_is_one_item(workspace):
+    """From above, "round metal object" boxes the lid and "soda_can" the whole can; NMS keeps both
+    (different classes). As two items, the scan picture gave the second one another can's label."""
+    whole = box_around(CANS[0], pad=6, label="soda_can", conf=0.6)
+    lid = box_around(CANS[0], pad=-8, label="round metal object", conf=0.4)
+    rejected = []
+    objects = observations_from_boxes([lid, whole, box_around(CANS[1])], make_frame(CANS), workspace, rejected)
+    assert len(objects) == 2
+    assert [(b is lid, why) for b, why in rejected] == [(True, "same can as another box")]

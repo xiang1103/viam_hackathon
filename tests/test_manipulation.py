@@ -237,7 +237,7 @@ async def test_moves_are_sent_in_the_configured_frame_with_the_real_walls(worksp
 # --- survey <-> scan by fixed joint angles (poses.yaml joint_moves) ----------------------------
 
 SURVEY_JOINTS = [-91.964, -31.182, -86.094, -149.805, -94.997, 107.931]
-SCAN_JOINTS = [-79.674, -16.455, -42.637, -317.093, 58.674, 252.173]  # stored paired with SURVEY_JOINTS
+SCAN_JOINTS = [-81.862, -27.512, -31.533, -317.105, 64.803, 252.209]  # stored paired with SURVEY_JOINTS
 
 
 class JointArm(FakeArm):

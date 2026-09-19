@@ -228,6 +228,19 @@ def observations_from_boxes(
         o.detection_confidence = b.confidence
         _centre_on_silhouette(o, b, frame, workspace)
         found.append((b, o))
+    # Two prompts can box the same can (from above: "round metal object" round the lid and
+    # "soda_can" round the whole can), and YOLO's NMS only compares boxes of one class. Both land
+    # on the same depth blob, so the second became a second item at the same spot, and the scan
+    # picture then lent it ANOTHER can's label: on 2026-09-19 a Red Bull was fetched as a coke.
+    # Two real cans cannot stand closer than a can's width, so the surer box keeps the spot.
+    same = seg.get("same_item_mm", 40)
+    unique: list[tuple[Box, ObjectObservation]] = []
+    for f in sorted(found, key=lambda f: -f[0].confidence):
+        if any(np.linalg.norm(f[1].centroid[:2] - p.centroid[:2]) < same for _, p in unique):
+            rejected.append((f[0], "same can as another box"))
+            continue
+        unique.append(f)
+    found = [f for f in found if any(f is u for u in unique)]  # back in YOLO's order
     kept = finish([o for _, o in found], workspace)
     for b, o in found:
         if o not in kept:
