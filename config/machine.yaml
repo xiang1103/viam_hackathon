@@ -26,7 +26,11 @@ yolo:
   # Coke 0.40 -> 0.78; with "can" YOLO missed cans below the cutoff. Of the words tried, soda_can scored
   # highest on every can (then "soda can", "can of soda"; "drink-can", "beverage can" and "aluminum can"
   # were no better than "can").
-  classes: [soda_can, bottle]
+  # "round metal object" (2026-09-19): from the top-view survey a can is mostly its lid, and "soda_can" scored
+  # only 0.07-0.12 on all four cans (nothing found); this prompt scored 0.35-0.52 on the same picture and 0.76 on
+  # straight-down close-ups. On tilted views it stays silent and soda_can / bottle win, with no double boxes
+  # (checked on saved frames). YOLO's label is ignored anyway: only the box and mask are used.
+  classes: [soda_can, bottle, round metal object]
   # 0.2 (was 0.3): a box only becomes a pickable item if depth shows something standing in it and it
   # lies in the zone, so a false box costs nothing; a missed can is never picked.
   confidence: 0.2
@@ -70,4 +74,7 @@ trust_is_holding: false
 arm_speed: 25
 rpc_timeout_s: 30
 # A color + raw depth frame is megabytes; over a relayed connection it can take a while.
-image_timeout_s: 90
+image_timeout_s: 45      # was 90. One picture is 1.9 MB (1.84 of it the raw depth image): 2.4 s on a good link (6 Mbit/s),
+                         # 25 s at the worst speed that still got through on 2026-09-19 (0.6 Mbit/s). A download that
+                         # stalls never finishes - a fresh request does - so give up sooner and ask again more often.
+image_attempts: 5

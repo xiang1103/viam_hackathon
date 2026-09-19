@@ -69,3 +69,51 @@ def test_an_item_beyond_reach_is_never_chosen_and_is_reported(workspace, caplog)
     chosen = choose_next(objects, workspace)
     assert round(chosen.centroid[0]) == 330
     assert "will be left" in caplog.text and "(450, 50)" in caplog.text
+
+
+def _can_mask(frame, can, workspace):
+    """The colour mask a segmenting detector would give for a standing can: its whole outline."""
+    import cv2
+
+    from recycle_sorter.perception.silhouette import _outline
+
+    hull = _outline(frame, can["x"], can["y"], 33.0, TABLE_TOP + can["h"], TABLE_TOP, workspace["silhouette"])
+    mask = np.zeros(frame.depth.shape, np.uint8)
+    cv2.fillConvexPoly(mask, hull, 1)
+    return mask.astype(bool)
+
+
+def test_a_standing_can_is_centred_on_its_outline_when_depth_drops_out_on_the_lid(workspace):
+    """A shiny lid loses depth over part of it, and the centre of what is left is not the can's."""
+    can = CANS[0]
+    frame = make_frame([can])
+    b = box_around(can)
+    b.mask = _can_mask(frame, can, workspace)
+    middle = (b.x0 + b.x1) // 2
+    frame.depth[b.y0 : b.y1, middle + 8 : b.x1] = 0  # no depth on most of one half of the lid
+
+    workspace["silhouette"]["enabled"] = False
+    from_depth = observations_from_boxes([b], frame, workspace)[0]
+    assert np.hypot(from_depth.grasp_xy[0] - can["x"], from_depth.grasp_xy[1] - can["y"]) > 8
+
+    workspace["silhouette"]["enabled"] = True
+    o = observations_from_boxes([b], frame, workspace)[0]
+    assert np.hypot(o.grasp_xy[0] - can["x"], o.grasp_xy[1] - can["y"]) < 2
+    assert np.allclose(o.centroid, o.grasp_xy) and o.height == pytest.approx(122, abs=2)
+
+
+def test_the_depth_position_is_kept_when_the_outline_does_not_fit(workspace):
+    can = CANS[0]
+    frame = make_frame([can])
+    b = box_around(can)
+    b.mask = np.zeros(frame.depth.shape, bool)
+    b.mask[b.y0 : b.y1, b.x0 : b.x0 + 400] = True  # a mask far wider than any can: two items in one
+    o = observations_from_boxes([b], frame, workspace)[0]
+    assert np.hypot(o.centroid[0] - can["x"], o.centroid[1] - can["y"]) < 3
+
+
+def test_a_low_thing_in_a_box_is_not_an_item(workspace):
+    cable = {"x": 330, "y": -60, "l": 40, "w": 20, "h": 30, "yaw": 0, "color": "blue"}
+    rejected = []
+    assert observations_from_boxes([box_around(cable)], make_frame([cable]), workspace, rejected) == []
+    assert [why for _, why in rejected] == ["too low for a can"]

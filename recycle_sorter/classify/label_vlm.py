@@ -50,6 +50,7 @@ class LocalLabelClassifier:
         self.min_side = int(cfg.get("min_crop_side", 640))
         self.pad = float(cfg.get("crop_pad", 0.08))
         self.view: str = cfg.get("view", "survey")
+        self.survey_crop = bool(cfg.get("survey_crop", True))  # scan view: also send the survey crop with the scan crop
         self.last_views: list = []  # scan view: kept for the debug picture
         self.last_scan_only: list[Classification] = []  # scan view: cans YOLO found only in the scan picture
         self.last_links: list[dict] = []  # scan view: which survey box and scan box each read came from
@@ -170,6 +171,8 @@ class LocalLabelClassifier:
                 link["views"], r = before.meta.get("link", {}).get("views", []), before
                 results.append(Classification(r.label, r.confidence, {**r.meta, "link": link, "remembered": True}))
                 continue
+            if top is not None and v.readable and not self.survey_crop:
+                top = None  # a top-view survey shows the lid, not the label: the scan crop alone is read
             if top is not None and v.readable:
                 link["views"] = ["survey", "scan"]
                 r = await self._read(top, v.crop, views=(VIEW_NAMES["survey"], VIEW_NAMES["scan"]))

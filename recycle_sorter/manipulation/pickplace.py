@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from ..perception.silhouette import is_upright
 from ..types import ObjectObservation
 from .motion import Manipulator
 
@@ -42,12 +43,23 @@ async def place_at(m: Manipulator, x: float, y: float, z: float, theta: float = 
 
 
 def grasp_pose(obs: ObjectObservation, workspace: dict) -> tuple[float, float, float, float]:
-    """Top-down grasp: (x, y, z, theta). Fingers close across the object's short axis."""
+    """Top-down grasp: (x, y, z, theta). Fingers close across the object's short axis.
+
+    An upright round item (a standing can) has no short axis: its measured yaw is noise, anywhere
+    in +-90 degrees and different in every picture. It gets the fixed gripper.upright_theta instead,
+    so the wrist does not spin for nothing - and so whatever the fingers sit off the gripper frame's
+    axis points the same way on every pick, where the constant xy_offset can cancel it.
+    """
     g = workspace["gripper"]
     z = max(obs.top_z - g["finger_depth"], workspace["table_top"] + workspace["bounds"]["z_min_above_table"])
     x, y = obs.grasp_xy if obs.grasp_xy is not None else obs.centroid
     dx, dy = g.get("xy_offset", (0.0, 0.0))  # camera-to-arm calibration error, measured with the hover test
-    return float(x) + dx, float(y) + dy, z, obs.yaw_deg + g["yaw_offset_deg"]
+    upright = g.get("upright_theta")
+    if upright is not None and is_upright(obs, workspace):
+        theta = float(upright)
+    else:
+        theta = obs.yaw_deg + g["yaw_offset_deg"]
+    return float(x) + dx, float(y) + dy, z, theta
 
 
 async def pick(m: Manipulator, obs: ObjectObservation) -> bool:

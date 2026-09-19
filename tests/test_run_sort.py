@@ -160,3 +160,42 @@ async def test_a_filled_order_stops_without_another_look():
     robot = SimRobot(SCENE)
     counts = await app.run_sort(robot, "color", wanted={"green": 1})
     assert dict(counts) == {"green": 1} and robot.pictures == 1
+
+
+async def test_scan_first_takes_the_label_picture_before_the_survey(monkeypatch):
+    """pick.scan_first: the survey picture - where the grasp comes from - is the last thing before a pick."""
+    from recycle_sorter.types import Classification
+
+    class ScanReader:
+        needs_scan = True
+        last_views: list = []
+
+        async def classify_scan(self, objects, scan, survey, workspace):
+            assert scan is not survey
+            return [Classification("red", 0.9) for _ in objects]
+
+    monkeypatch.setattr(app, "make_classifier", lambda mode, cfg: ScanReader())
+    monkeypatch.setattr(app, "save_scan_debug", lambda *a, **k: "scan.png")
+    for scan_first, expected in ((True, ["scan", "survey"]), (False, ["survey", "scan"])):
+        robot = SimRobot(SCENE[:1])
+        robot.manip.workspace["pick"]["scan_first"] = scan_first
+        visited = []
+        goto = robot.manip.goto_named
+
+        async def record(name, goto=goto, visited=visited):
+            visited.append(name)
+            await goto(name)
+
+        robot.manip.goto_named = record
+        await app.run_sort(robot, "color", max_picks=1)
+        assert visited[:2] == expected
+
+
+async def test_an_item_that_is_left_is_logged_with_the_reason(caplog):
+    caplog.set_level("WARNING")
+    far = {"x": 450, "y": -70, "l": 30, "w": 30, "h": 30, "yaw": 0, "color": "red"}  # 455 mm from the arm base
+    robot = SimRobot([far])
+    robot.manip.workspace["pick"]["max_reach"] = 400
+    assert dict(await app.run_sort(robot, "color")) == {} and robot.scene == [far]
+    assert "out of reach: 455 mm from the arm base, the limit is 400" in caplog.text
+    assert "too wide or given up on" not in caplog.text
