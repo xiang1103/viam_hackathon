@@ -18,6 +18,9 @@ Per command:
                              survey is taken last, so the arm goes from it straight to the pick.
                           c. picks the surest match of each ordered category, one pile per category.
                              A category nobody read off a can is skipped and reported as missing.
+                          All of a command's items are fetched from that ONE look (--look once, the
+                          default here): no new pictures between picks. A can that a pick nudged, or a
+                          grasp that failed, is not re-checked - use --look when_needed for that.
   3. result               printed, and written to data/scans/<launch time>/ together with the latest
                           look's two annotated YOLO pictures: scan.png (labels), survey.png
                           (positions), order.json (the order, what was fetched, what was missing).
@@ -77,7 +80,9 @@ async def handle(command: str, get_robot, args) -> None:
         return
     robot = await get_robot()
     try:
-        fetched = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look,
+        # One look per command: the label picture and the position picture are taken once, and every item
+        # of the order is then fetched from them - no new picture between picks, none at the end.
+        fetched = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else (args.look or "once"),
                                  wanted=dict(order.items), pictures=args.pictures)
     except (RuntimeError, ValueError) as e:  # e.g. no room for piles, camera download failed
         print(f"could not fetch the order: {e}")
@@ -112,7 +117,9 @@ async def main() -> None:
     ap.add_argument("--step", action="store_true", help="press Enter before every arm motion")
     ap.add_argument("--mode", default="label", help="classifier in config/sort.yaml (default: local VLM)")
     ap.add_argument("--look", choices=["once", "when_needed", "every_pick"],
-                    help="how often to take a new picture (default: pick.look in workspace.yaml)")
+                    help="how often to take a new picture. Default `once`: one look per command, and everything "
+                    "ordered is fetched from it. `when_needed` looks again after a failed grasp or after picking a "
+                    "can that had a close neighbour; `every_pick` after every pick")
     ap.add_argument("--max-picks", type=int, default=20)
     ap.add_argument("--cam-pos", action="store_true",
                     help="read labels from the survey picture too, skipping the closer `scan` picture "

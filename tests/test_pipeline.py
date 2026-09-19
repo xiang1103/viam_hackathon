@@ -77,3 +77,17 @@ async def test_an_order_with_nothing_we_stock_moves_nothing(table, monkeypatch, 
     monkeypatch.setattr(pipeline, "parse_order", lambda text: Order(items={}, not_supported=["orange juice"]))
     await pipeline.handle("an orange juice", get_robot, args)
     assert robot.pictures == 0 and robot.placed == [] and "nothing to fetch" in capsys.readouterr().out
+
+
+async def test_every_item_of_an_order_is_fetched_from_one_look(table, monkeypatch):
+    """Two pictures in all - the label picture and the position picture - however many items are ordered."""
+    robot, args, get_robot = table
+    labels = [LABEL[c["color"]] for c in CANS]
+    order = Order(items={"coke": labels.count("coke"), "water": labels.count("water")})
+    assert sum(order.items.values()) >= 3
+    monkeypatch.setattr(pipeline, "parse_order", lambda text: order)
+
+    await pipeline.handle("all the cokes and waters", get_robot, args)
+
+    assert len(robot.placed) == sum(order.items.values())
+    assert robot.pictures == 2
