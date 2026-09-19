@@ -53,9 +53,13 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 - Camera calibration lives in config: `machine.yaml` `depth_scale` (this RealSense reads ~6 % long) and `workspace.yaml` `gripper.xy_offset`, both measured on the arm on 2026-09-18. To re-measure x/y: run `scripts/02_hover_test.py`, and while it hovers take a read-only snapshot - the camera looks straight down at the lid.
 - `choose_next` (`perception/select.py`) leaves an item where it is, with a warning, when its grasp target is outside `bounds`. The target is the item's position plus `gripper.xy_offset`, for example a can at the table's -y edge. The next item is picked instead of `UnsafeTarget` stopping the run.
   `bounds.named_*_min` loosen the limits only for taught poses (`survey`, `scan`), never for picks.
-- Picks have their own, looser limits: `pick.max_reach` (760) and `pick.y_min` (-545), used by `choose_next` and `pick_at`.
-  Pile layout and placing keep `sorted_layout.max_reach` (650) and `bounds.y` (-460), so piles are never laid out at the table's edge or beyond the arm's reach.
-  A pick target the arm can't actually reach is refused by the motion planner. That moves nothing and counts as a failed pick. `scripts/05_probe_reach.py` measures the real reach, and it moves the arm.
+- Picks have their own limits: `pick.max_reach` (655) and `pick.y_min` (-545), used by `choose_next` and `pick_at`.
+  Reach is measured to the arm's actual target: the grasp point plus `xy_offset`.
+  Pile layout and placing keep `sorted_layout.max_reach` (650) and `bounds.y` (-460), so piles are never laid out at the table's edge.
+  - `pick.max_reach` is the arm's real straight-down reach. It was computed on 2026-09-19 from the arm's kinematics, whose forward kinematics matched Viam's reported gripper pose exactly.
+  - The reach is about 710 mm at grasp height, 668 mm at approach height (+150), and 664 mm at lift height (+160). It's the same in every direction.
+  - A pick passes through all three heights, so a higher `pick.lift` or `pick.approach` reduces the reach. At +200 the reach was 644 mm.
+  - Beyond that, the planner answers "zero IK solutions", so cans out there must be moved closer.
 - z values in the package mean **fingertip** height. `Manipulator.move_to` adds `tcp_offset` to get the gripper-frame pose for `motion.move`.
 - Safe to run (no motion): `.venv/bin/python -m pytest -q`, and `python -m recycle_sorter.cli --replay <frames dir>`.
 - These **move the arm**: `python -m recycle_sorter.cli` (without `--dry-run` / `--replay`), `scripts/02_hover_test.py`. Use `--step` on first runs.
@@ -97,9 +101,10 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
       `num_ctx` always leaves room for two views (`MAX_VIEWS`). Ollama reloads the model, about 50 s, whenever `num_ctx` changes, so mixing one-view and two-view requests must not change it.
     - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
     The joint angles are in `config/joint_positions.json`. Survey ↔ scan moves by those fixed joint angles, so it takes the same path every time (`poses.yaml` → `joint_moves`, `Manipulator._joint_move`). Every other move goes through the planner.
-      A raw joint move skips the planner's obstacle check. So it is used only when the arm is already at one of those two taught poses, within `tolerance_deg` on every joint, ignoring whole turns. From anywhere else, such as the first look of a run or after a pick, the planner is used.
-      Joints 1, 4 and 6 (`wrap_joints`) take the shortest way round, so the base turns about 12°, not 372° (`cam_lower_pos` has joint 1 at 280°).
-      The two poses hold the wrist in different arrangements, so each trip still turns joints 4, 5 and 6 by about 144–167°. The user accepted this on 2026-09-19. Re-teaching `cam_lower_pos` by jogging from `cans_view` would remove it.
+      It moves to and from the **exact taught numbers**, and only when the arm is already on one of them, within `tolerance_deg` on every joint. A raw joint move skips the planner's obstacle check, so from anywhere else the planner is used.
+      A whole turn off on joint 1, 4 or 6 is the same pose but winds the camera cable differently, so it doesn't count and the planner is used.
+      `cam_lower_pos` is stored in the version that pairs with `cans_view`: `[-79.674, -16.455, -42.637, -317.093, 58.674, 252.173]`. It was hand-taught as `[280.3, -16.5, -42.6, 42.9, 58.7, -107.8]`, the same pose with joints 1, 4 and 6 a whole turn round. When re-teaching, store it the same way, or the base turns 372° every trip.
+      Each trip turns joints 4, 5 and 6 by about 144–167°, because the two poses hold the wrist in different arrangements. The user accepted this on 2026-09-19.
   - The same arm path without the prompt: `python -m recycle_sorter.cli --mode label --order "..."` or `--want coke=2`.
   - The image half only, with no arm: `python scan_drinks.py --camera|<pic>`. It writes `data/scans/<timestamp>/` with `picture.jpg`, `detected.jpg`, `crops/`, and `results.json`.
   - The text half only: `python -m llm.parse_order`.

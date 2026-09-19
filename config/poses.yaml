@@ -30,8 +30,11 @@ named:
 # planner's obstacle check, so it is used ONLY between these taught poses (both high above the table)
 # and only when the arm is already at one of them, within tolerance_deg on every joint. Anywhere else
 # (e.g. the first look of a run, or after a pick) the planner is used, as for every other move.
-# wrap_joints turn +-360 degrees, so they go the shortest way round: 280 and -80 are the same angle.
+# Exact numbers: an arm a whole turn off on joint 1, 4 or 6 is in the same pose but has the camera cable
+# wound differently, so it counts as NOT at the pose, and the planner is used.
+# cam_lower_pos is stored in the version that pairs with cans_view: hand-taught as [280.3, -16.5, -42.6,
+# 42.9, 58.7, -107.8], it is kept as [-79.7, -16.5, -42.6, -317.1, 58.7, 252.2] - the same pose, joints 1, 4
+# and 6 a whole turn round - so a trip turns every joint at most ~167 degrees (not 372 on the base).
 joint_moves:
   poses: {survey: cans_view, scan: cam_lower_pos}
   tolerance_deg: 3
-  wrap_joints: [1, 4, 6]

@@ -17,29 +17,10 @@ from .safety import UnsafeTarget, check_frame_pose, check_target
 log = logging.getLogger(__name__)
 
 
-def _same_joints(a: list[float], b: list[float], wrap: set[int], tolerance: float) -> bool:
-    """Every joint within `tolerance` degrees; for `wrap` joints a whole turn counts as no difference."""
-    if len(a) != len(b):
-        return False
-    for i, (x, y) in enumerate(zip(a, b)):
-        d = (x - y + 180.0) % 360.0 - 180.0 if i in wrap else x - y
-        if abs(d) > tolerance:
-            return False
-    return True
-
-
-def _nearest_turn(target: list[float], now: list[float], wrap: set[int], limit: float = 360.0) -> list[float]:
-    """`target` with each `wrap` joint moved by whole turns to the equivalent angle nearest `now`,
-    kept within +-limit: the same arm pose, reached by the shortest rotation."""
-    out = list(target)
-    for i in wrap:
-        t = out[i] + 360.0 * round((now[i] - out[i]) / 360.0)
-        if t > limit:
-            t -= 360.0
-        elif t < -limit:
-            t += 360.0
-        out[i] = t
-    return out
+def _same_joints(a: list[float], b: list[float], tolerance: float) -> bool:
+    """Every joint within `tolerance` degrees. A whole turn apart is NOT the same: the pose is,
+    but the camera cable is wound differently."""
+    return len(a) == len(b) and all(abs(x - y) <= tolerance for x, y in zip(a, b))
 
 
 class Manipulator:
@@ -147,27 +128,28 @@ class Manipulator:
     async def _joint_move(self, name: str) -> bool:
         """Move to `name` by its taught joint angles, if poses.yaml `joint_moves` allows it here.
 
-        Only between the poses listed there, and only when the arm is at one of them now (every
-        joint within tolerance_deg, whole turns ignored): a raw joint move skips the planner's
-        obstacle check, which is safe from one high taught pose to another, not from anywhere.
+        Only between the poses listed there, and only when the arm is at one of them now, on the
+        exact taught numbers (every joint within tolerance_deg; a whole turn off does not count):
+        a raw joint move skips the planner's obstacle check, which is safe from one high taught
+        pose to another, not from anywhere. It always ends on the exact taught numbers, so the arm
+        takes the same path and winds the camera cable the same way every trip.
         Returns False, having moved nothing, when the planner should be used instead."""
         cfg = self.poses.get("joint_moves") or {}
         table = cfg.get("poses") or {}
         if name not in table or self.arm is None or any(j not in self.joints for j in table.values()):
             return False
-        wrap = {j - 1 for j in cfg.get("wrap_joints", [])}
         try:
             now = list((await self.arm.get_joint_positions(timeout=self.timeout)).values)
         except Exception as e:  # can't tell where the arm is: don't risk a raw joint move
             log.warning("could not read the arm's joints (%s) - using the planner", e)
             return False
-        at = next((p for p, j in table.items() if _same_joints(now, self.joints[j], wrap, cfg.get("tolerance_deg", 3))), None)
+        at = next((p for p, j in table.items() if _same_joints(now, self.joints[j], cfg.get("tolerance_deg", 3))), None)
         if at is None:
-            log.info("not at a taught joint pose - planning the move to '%s'", name)
+            log.info("not on a taught joint pose's exact numbers - planning the move to '%s'", name)
             return False
         if at == name:
             return True  # already there
-        target = _nearest_turn(self.joints[table[name]], now, wrap)
+        target = self.joints[table[name]]
         log.info("'%s' -> '%s' by fixed joint angles %s", at, name, [round(v, 1) for v in target])
         await self.arm.move_to_joint_positions(JointPositions(values=target), timeout=self.timeout)
         return True
