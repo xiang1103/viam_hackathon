@@ -183,6 +183,17 @@ async def test_with_a_single_look_a_hidden_can_is_set_aside_not_guessed(monkeypa
     assert dict(counts) == {"coca-cola": 2, "pepsi": 1, REJECT: 1}
 
 
+async def test_with_a_pictures_folder_only_the_two_yolo_pictures_are_kept(monkeypatch, tmp_path):
+    """pipeline.py passes `pictures`: survey.png and scan.png there, overwritten each look;
+    no raw frames, no data/debug overlays, links or layouts."""
+    robot, _ = brand_robot(monkeypatch)
+    monkeypatch.setattr(app, "save_frame", lambda *a, **k: pytest.fail("raw frame saved"))
+    counts = await app.run_sort(robot, "brand", pictures=tmp_path / "launch")
+    assert dict(counts) == {"coca-cola": 2, "pepsi": 1, "sprite": 1}
+    assert sorted(p.name for p in (tmp_path / "launch").iterdir()) == ["scan.png", "survey.png"]
+    assert not (tmp_path / "debug").exists()  # app.DATA_DIR is tmp_path in tests
+
+
 async def test_look_only_reports_and_picks_nothing(monkeypatch):
     robot, _ = brand_robot(monkeypatch)
     counts = await app.run_sort(robot, "brand", look_only=True)

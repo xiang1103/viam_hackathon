@@ -64,14 +64,13 @@ A typed order such as "2 cokes and a sparkling water" goes in, and the arm fetch
 It runs entirely on this laptop through Ollama, so it needs no API key.
 
 - `pipeline.py` is a front end on top of `recycle_sorter`. For each command:
-  1. `llm/parse_order.py` (`qwen2.5:1.5b`) turns the text into `{category: count}` plus a list of `not_supported` items.
-     The result is written to `data/orders/<timestamp>.json` as `command`, `items`, and `not_supported`.
+  1. `llm/parse_order.py` (`qwen2.5:1.5b`) turns the text into `{category: count}` plus a list of `not_supported` items. It is printed, not saved.
   2. No confirmation: the arm starts fetching as soon as the order is parsed. Use `--step` or `--dry-run` to check first.
   3. `run_sort(robot, "label", wanted=items)` does the rest: survey picture, YOLO boxes, the local VLM label for each crop (`classify/label_vlm.py` → `llm/classify_image.py`), then pick and place, surest reads first, one pile per category.
-  4. `result`, `fetched`, and `missing` are added to the same JSON, or `error` if the run failed. The prompt then returns for the next command.
-  5. The last annotated survey picture (boxes and labels) is copied to `data/scans/<timestamp>.png`, the same timestamp as the order JSON, and its path is recorded as `picture`.
-     The last scan picture, with each can's crop box, is copied to `<timestamp>-scan.png` (`scan_picture`).
-     `run_sort` draws every picture it takes in `data/debug/`. Nothing else is saved: no crops and no per-box results.
+  4. `fetched` and `missing` are printed, or the error if the run failed. The prompt then returns for the next command.
+  5. Files: only `data/scans/<launch time>/`, made once per launch, holding the latest look's two annotated YOLO pictures, `survey.png` and `scan.png`. Each look overwrites them.
+     This is `run_sort(..., pictures=<folder>)`. With `pictures`, nothing goes to `data/orders/`, `data/debug/` or `data/frames/`.
+     Without it (`recycle_sorter.cli`, `scripts/`), `run_sort` still keeps every look for debugging: raw frames in `data/frames/`, and overlays, links and pile layouts in `data/debug/`.
   - The robot connects once per session. Ctrl-C stops the arm, the same way the CLI does.
 - Run it:
   - `python pipeline.py` prompts for commands, and **the arm moves**.
@@ -86,7 +85,7 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
       The scan-picture box is the YOLO box there nearest the can's projected 3D box (`perception/scan.py`), linked one-to-one (`LocalLabelClassifier._link`). The projection alone lands tens of pixels off and caught two cans per crop on 2026-09-18.
       Every YOLO box in either picture is sent to the VLM. A can hidden behind a nearer one still gets its own scan box if YOLO found one, and visible cans pick their boxes first, so a can hidden behind another can't take the front can's box.
       A survey can with no scan box is sent with its survey crop alone. A scan box that no survey can links to is sent alone, as `scan-N`. It has no position, so it is logged and drawn but never picked (`last_scan_only`). Nothing is deferred. A can that hasn't moved keeps its last read.
-      Links: each read's `meta["link"]` holds `can`, `survey_box`, `scan_box`, `scan_yolo_index`, and `views`. `#i` in the survey picture is `#i` in the scan picture. The links are written to `data/debug/<ts>-scan-links.json`, logged per can, and copied into the order JSON as `links`.
+      Links: each read's `meta["link"]` holds `can`, `survey_box`, `scan_box`, `scan_yolo_index`, and `views`. `#i` in the survey picture is `#i` in the scan picture. The links are logged per can. Without `pictures`, they are also written to `data/debug/<ts>-scan-links.json`.
       `num_ctx` always leaves room for two views (`MAX_VIEWS`). Ollama reloads the model, about 50 s, whenever `num_ctx` changes, so mixing one-view and two-view requests must not change it.
     - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
     The joint angles are in `config/joint_positions.json`, but the code always moves to the stored gripper poses through the planner, never to raw joint angles.
@@ -97,8 +96,9 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
   - Override the models with the `ORDER_MODEL` and `VISION_MODEL` environment variables.
   - Every request sends `keep_alive: -1`, so both models stay loaded until Ollama stops. Ollama's default unloads them after 5 minutes. Override with `OLLAMA_KEEP_ALIVE_MODELS`, a number or a duration like `"30m"`.
   - Loading the vision model and having it read the reference photos takes about 55 s once per Ollama start.
-    - `python -m llm.warmup &` does this in the background right after `ollama serve`.
-    - `pipeline.py` also starts `warm_up()` in the background on launch, overlapping with connecting to the robot.
+    - `python -m llm.warmup &` does this in the background right after `ollama serve`. `ollama serve` alone loads nothing.
+    - `pipeline.py` also runs the same `warm_all()` in the background on launch, overlapping with connecting to the robot.
+    - Order matters: the vision model loads first, then the order model. Loading the 7B model second makes Ollama unload the order model on this 16 GB Mac. In this order both stay loaded (about 8.6 GB).
     - After that, a crop takes about 12 s even on the first order. Measured 2026-09-19, with both models loaded together (7.2 GB).
   - The 7B model needs about 7 GB of memory.
 - **Categories are shared.** They live only in `llm/categories.py`, and both models read them from there:

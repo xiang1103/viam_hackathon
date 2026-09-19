@@ -107,6 +107,16 @@ def _chat(text: str, labels: dict[str, dict[str, str]]) -> dict:
     return json.loads(reply["message"]["content"])
 
 
+def warm_up() -> float:
+    """Load the model and have it read the system prompt now, so the first order is fast.
+    Returns the seconds it took."""
+    import time
+
+    start = time.perf_counter()
+    _chat("a coke", CATEGORIES)
+    return time.perf_counter() - start
+
+
 def parse_order(text: str, labels: dict[str, dict[str, str]] = CATEGORIES) -> Order:
     """Parse a request into {label: quantity}. Duplicate labels are summed."""
     order = Order()

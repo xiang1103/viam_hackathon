@@ -12,18 +12,22 @@ means even the first order is fast.
 from __future__ import annotations
 
 import sys
-import time
 
 from llm import classify_image, parse_order
 
 
-def main() -> None:
-    start = time.perf_counter()
-    parse_order.parse_order("a coke")
-    print(f"{parse_order.MODEL}: ready in {time.perf_counter() - start:.1f} s", flush=True)
+def warm_all(say=print) -> None:
+    """Load the vision model FIRST, then the order model. The other way round, Ollama unloads the
+    small order model to make room for the 7B one (seen 2026-09-19 on this 16 GB Mac); in this order
+    both stay loaded together (~8.6 GB)."""
     refs = len(classify_image.load_references())
     took = classify_image.warm_up()
-    print(f"{classify_image.MODEL}: ready with {refs} reference photos in {took:.1f} s", flush=True)
+    say(f"{classify_image.MODEL}: ready with {refs} reference photos in {took:.1f} s")
+    say(f"{parse_order.MODEL}: ready in {parse_order.warm_up():.1f} s")
+
+
+def main() -> None:
+    warm_all(lambda msg: print(msg, flush=True))
 
 
 if __name__ == "__main__":

@@ -72,8 +72,9 @@ def assess(
     return demand
 
 
-def save_debug(frame: Frame, objects, results, name: str, workspace: dict[str, Any] | None = None) -> Path:
-    out = DATA_DIR / "debug"
+def save_debug(frame: Frame, objects, results, name: str, workspace: dict[str, Any] | None = None,
+               out_dir: Path | None = None) -> Path:
+    out = out_dir or DATA_DIR / "debug"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}.png"
     cv2.imwrite(str(path), draw(frame, objects, [r.label for r in results], workspace))
@@ -98,7 +99,8 @@ def crowded(target: ObjectObservation, others: list[ObjectObservation], clearanc
     )
 
 
-def save_scan_debug(scan: Frame, seen, results, name: str, scan_only=(), links=None) -> Path:
+def save_scan_debug(scan: Frame, seen, results, name: str, scan_only=(), links=None,
+                    out_dir: Path | None = None) -> Path:
     """The eye-level picture with each item's crop box and what it was read as.
 
     Items are numbered as in the survey picture (#i there is #i here). Cans YOLO found only in
@@ -121,7 +123,7 @@ def save_scan_debug(scan: Frame, seen, results, name: str, scan_only=(), links=N
     for r in scan_only:
         link = r.meta["link"]
         mark(link["scan_box"], f"{link['can']} {r.label} {r.confidence:.2f}", (0, 140, 255))
-    out = DATA_DIR / "debug"
+    out = out_dir or DATA_DIR / "debug"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}.png"
     cv2.imwrite(str(path), img)
@@ -137,6 +139,7 @@ async def run_sort(
     look: str | None = None,
     look_only: bool = False,
     wanted: dict[str, int] | None = None,
+    pictures: Path | None = None,
 ) -> Counter:
     """Assess the unsorted zone, create piles to fit what is there, then empty it into them.
 
@@ -156,6 +159,10 @@ async def run_sort(
     `wanted` turns the run into an ORDER: {class: how many}, e.g. {"coke": 2, "sparkling_water": 1}.
     Only those items are picked, the surest reads first, each class set down in its own pile;
     everything else stays where it is. What could not be found is logged as missing.
+
+    `pictures` keeps only the two annotated YOLO pictures of the latest look, as survey.png and
+    scan.png in that folder, overwritten each look. Without it, every look is kept for debugging:
+    raw frames in data/frames/, and annotated pictures, links and pile layouts in data/debug/.
     """
     look = look or robot.manip.workspace["pick"].get("look", "when_needed")
     if look not in LOOKS:
@@ -191,7 +198,8 @@ async def run_sort(
             layout = PileLayout(workspace, robot.manip.poses)
             layout.validate()
         objects = await robot.detect(frame)
-        save_frame(frame, objects=objects if record_objects else None)
+        if pictures is None:
+            save_frame(frame, objects=objects if record_objects else None)
         if not objects:
             return []
         if getattr(classifier, "needs_scan", False) and objects:
@@ -200,11 +208,16 @@ async def run_sort(
             await robot.manip.goto_named("scan")
             scan = await robot.snapshot()
             scan.timestamp = f"{frame.timestamp}-scan"
-            save_frame(scan)
+            if pictures is None:
+                save_frame(scan)
             results = await classifier.classify_scan(objects, scan, frame, workspace)
             scan_only = getattr(classifier, "last_scan_only", [])
             links = getattr(classifier, "last_links", None)
-            log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp, scan_only, links))
+            if pictures is None:
+                path = save_scan_debug(scan, classifier.last_views, results, scan.timestamp, scan_only, links)
+            else:
+                path = save_scan_debug(scan, classifier.last_views, results, "scan", scan_only, out_dir=pictures)
+            log.info("scan: %s", path)
             for link in links or []:
                 log.info("  can %-7s survey box %-22s scan box %-22s views %-15s -> %s %.2f",
                          link["can"], link["survey_box"], link["scan_box"], "+".join(link["views"]) or "none",
@@ -223,7 +236,10 @@ async def run_sort(
             known[:] = [(o.centroid, r) for o, r in zip(objects, results)]
         else:
             results = await classify_all(objects, frame, classifier)
-        save_debug(frame, objects, results, frame.timestamp, workspace)
+        if pictures is None:
+            save_debug(frame, objects, results, frame.timestamp, workspace)
+        else:
+            log.info("survey: %s", save_debug(frame, objects, results, "survey", workspace, out_dir=pictures))
         if not planned:
             readable = [(o, r) for o, r in zip(objects, results) if not r.meta.get("defer")]
             demand = assess([o for o, _ in readable], [r for _, r in readable], policy)
@@ -233,7 +249,8 @@ async def run_sort(
             nothing = "nothing in the unsorted zone" if wanted is None else "none of the order is on the table"
             log.info("%s: %s", "assessment" if wanted is None else "to fetch", {k: n for k, (n, _) in demand.items()} or nothing)
             layout.plan(demand)
-            log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
+            if pictures is None:
+                log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
             planned = True
         return list(zip(objects, results))
 
@@ -318,7 +335,8 @@ async def run_sort(
         if wanted is not None:
             remaining[policy.pile_key(result)] -= 1
             queue = [(o, r) for o, r in queue if remaining[policy.pile_key(r)] > 0]
-        save_layout(workspace, layout)
+        if pictures is None:
+            save_layout(workspace, layout)
         if look == "every_pick":
             queue = []
         elif look == "when_needed" and crowded(target, [o for o, _ in queue], workspace["pick"]["disturb_clearance"]):
