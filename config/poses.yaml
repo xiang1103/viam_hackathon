@@ -19,8 +19,19 @@ named:
   # depth_scale and gripper.xy_offset were measured from this pose: grasps planned from another pose miss.
   survey: {x: 92.2, y: -164.8, z: 571.6, o_x: 0.490, o_y: -0.333, o_z: -0.806, theta: 156.9}
   # Where LABELS are read from in `--mode label` (sort.yaml view: scan): Xiang's `cam_lower_pos`
-  # (config/joint_positions.json), re-taught by hand on 2026-09-19 (second time) and read back from the arm as a gripper
+  # (config/joint_positions.json), re-taught by hand on 2026-09-19 (third time) and read back from the arm as a gripper
   # pose in arm_origin. Lower and closer, so each can covers more pixels. Only its picture is used - for
   # what the cans ARE; where they are still comes from `survey`.
-  scan: {x: 197.5, y: -396.7, z: 279.5, o_x: 0.580, o_y: -0.062, o_z: -0.812, theta: 164.7}
+  scan: {x: 160.8331, y: -377.4322, z: 274.665, o_x: 0.5945, o_y: -0.0184, o_z: -0.8039, theta: 173.0313}
   watch: {x: 197.46, y: 0.14, z: 616.44, o_x: 0.3746, o_y: 0.0008, o_z: -0.9272, theta: -4.12}   # move_arm.py's WATCH_POSE
+
+# survey <-> scan by FIXED JOINT ANGLES (config/joint_positions.json) instead of the planner, so the arm
+# takes the same path down to the eye-level view and back every time. A raw joint move skips the
+# planner's obstacle check, so it is used ONLY between these taught poses (both high above the table)
+# and only when the arm is already at one of them, within tolerance_deg on every joint. Anywhere else
+# (e.g. the first look of a run, or after a pick) the planner is used, as for every other move.
+# wrap_joints turn +-360 degrees, so they go the shortest way round: 280 and -80 are the same angle.
+joint_moves:
+  poses: {survey: cans_view, scan: cam_lower_pos}
+  tolerance_deg: 3
+  wrap_joints: [1, 4, 6]

@@ -131,3 +131,13 @@ pick:
   look: when_needed
   disturb_clearance: 30  # when_needed: a neighbour closer than this (edge to edge) triggers a new picture
   line_tolerance_mm: 2 # descents try a straight line first, then fall back to a free plan
+  # Limits for PICKING only; pile placement keeps bounds.y and sorted_layout.max_reach, so piles are never
+  # laid out at the table's edge. max_reach is the arm's real straight-down reach, measured to the arm's
+  # target (grasp point + xy_offset). COMPUTED 2026-09-19 from the arm's own kinematics (checked against
+  # Viam's reported gripper pose) at this finger_depth / approach / lift, gripper pointing down:
+  #   grasp height ~710 mm, approach height ~660 mm, lift height ~640 mm - the same in every direction.
+  # A pick passes through all three, so ~640 is the limit (the planner said "zero IK solutions" at 732).
+  # Raising pick.lift or pick.approach lowers it. Cans further out cannot be picked straight down: move
+  # them closer to the arm.
+  max_reach: 630
+  y_min: -545

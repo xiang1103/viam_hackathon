@@ -21,7 +21,8 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "diet_coke": {
         "order": "Diet Coke or Coke Zero (also 'diet coke', 'coke zero', 'sugar-free coke'). If a coke can is not red, it is most likely a diet coke.",
         "visual": "Diet Coke: SILVER/grey can with the word 'Diet' and red 'Coke' lettering. "
-                  "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'." ,
+                  "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'."
+                   "If you see a Coke and it's silver, it's a diet coke" ,
     },
     "water": {
         "order": "any bottled or canned water, still OR sparkling, in any flavor (also 'water', "

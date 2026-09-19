@@ -221,3 +221,67 @@ async def test_moves_are_sent_in_the_configured_frame_with_the_real_walls(worksp
     walls = seen[0].obstacles[0]
     assert walls.reference_frame == "arm_origin"
     assert {g.label for g in walls.geometries} == {"real-wall-front", "real-wall-side"}
+
+
+# --- survey <-> scan by fixed joint angles (poses.yaml joint_moves) ----------------------------
+
+SURVEY_JOINTS = [-91.964, -31.182, -86.094, -149.805, -94.997, 107.931]
+SCAN_JOINTS = [280.326, -16.455, -42.637, 42.907, 58.674, -107.827]
+
+
+class JointArm(FakeArm):
+    def __init__(self, joints):
+        super().__init__()
+        self.joints, self.moves = list(joints), []
+
+    async def get_joint_positions(self, timeout=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(values=list(self.joints))
+
+    async def move_to_joint_positions(self, positions, timeout=None):
+        self.joints = list(positions.values)
+        self.moves.append(list(positions.values))
+
+
+def joint_manipulator(workspace, arm, motion):
+    cfg = {"move_frame": "gripper", "rpc_timeout_s": 5}
+    poses = {**load_yaml("poses.yaml"), "joint_moves": {"poses": {"survey": "cans_view", "scan": "cam_lower_pos"},
+                                                        "tolerance_deg": 3, "wrap_joints": [1, 4, 6]}}
+    joints = {"cans_view": SURVEY_JOINTS, "cam_lower_pos": SCAN_JOINTS}
+    return Manipulator(arm, FakeGripper(), motion, cfg, workspace, poses, joints=joints)
+
+
+async def test_survey_to_scan_and_back_by_fixed_joints_the_short_way_round(workspace):
+    arm, motion = JointArm(SURVEY_JOINTS), FakeMotion()
+    m = joint_manipulator(workspace, arm, motion)
+    await m.goto_named("scan")
+    # The same pose as cam_lower_pos, but base and wrist take the shorter way: 280 -> -80 on joint 1
+    # (not a 372 degree turn), 42.9 -> -317.1 on joint 4, -107.8 -> 252.2 on joint 6.
+    assert arm.moves[-1] == pytest.approx([-79.674, -16.455, -42.637, -317.093, 58.674, 252.173])
+    await m.goto_named("survey")  # and back again, from that wound-up state
+    assert arm.moves[-1] == pytest.approx(SURVEY_JOINTS)
+    assert motion.calls == []  # the planner was never needed
+    turns = [abs(a - b) for a, b in zip(SURVEY_JOINTS, [-79.674, -16.455, -42.637, -317.093, 58.674, 252.173])]
+    assert max(turns) < 170
+
+
+async def test_joint_moves_only_from_a_taught_pose_otherwise_the_planner(workspace):
+    elsewhere = [0.0, -40.0, -60.0, 0.0, 90.0, 0.0]  # e.g. just placed a can: not at survey or scan
+    arm, motion = JointArm(elsewhere), FakeMotion()
+    m = joint_manipulator(workspace, arm, motion)
+    await m.goto_named("survey")
+    assert arm.moves == [] and len(motion.calls) == 1
+    # Survey reached by the planner in the taught arm configuration (a whole base turn apart counts
+    # as the same): the move down to scan is by fixed joints.
+    arm.joints = [SURVEY_JOINTS[0] + 360.0, *SURVEY_JOINTS[1:]]
+    await m.goto_named("scan")
+    assert len(arm.moves) == 1 and len(motion.calls) == 1
+
+
+async def test_without_taught_joints_every_named_move_is_planned(workspace):
+    arm, motion = JointArm(SURVEY_JOINTS), FakeMotion()
+    m = live_manipulator(workspace, motion, FakeGripper())
+    m.arm = arm
+    await m.goto_named("scan")
+    assert arm.moves == [] and len(motion.calls) == 1

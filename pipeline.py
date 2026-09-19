@@ -46,8 +46,9 @@ load_dotenv()  # OLLAMA_URL / models, before the llm modules read the environmen
 from llm.parse_order import parse_order  # noqa: E402
 from llm.warmup import warm_all  # noqa: E402
 from recycle_sorter.app import run_sort  # noqa: E402
-from recycle_sorter.config import DATA_DIR  # noqa: E402
+from recycle_sorter.config import DATA_DIR, load_yaml  # noqa: E402
 from recycle_sorter.io.robot import LiveRobot  # noqa: E402
+from recycle_sorter.perception.yolo import shared_detector  # noqa: E402
 
 SCANS_DIR = DATA_DIR / "scans"
 
@@ -118,6 +119,19 @@ async def main() -> None:
             pass
 
     threading.Thread(target=warm_quietly, name="model-warm-up", daemon=True).start()
+
+    # YOLO too (~2 s: load, then a first prediction that is ~1 s slower than later ones), in its own
+    # thread so it overlaps the Ollama load. Both pictures of every order then use this one copy
+    # (shared_detector); an order that arrives before it is ready waits for it rather than loading twice.
+    machine_cfg = load_yaml("machine.yaml")
+    if machine_cfg.get("perception") == "yolo":
+        def warm_yolo() -> None:
+            try:
+                shared_detector(machine_cfg["yolo"]).warm_up()
+            except Exception:
+                pass  # e.g. ultralytics missing: the first look reports it
+
+        threading.Thread(target=warm_yolo, name="yolo-warm-up", daemon=True).start()
 
     # Connect to the robot in the background too (3-9 s through the Viam cloud), so the prompt shows
     # at once; the first command waits for the connection only if it is not done yet. Viam's INFO

@@ -65,7 +65,7 @@ def test_a_neighbour_poking_into_the_box_does_not_move_the_object(workspace):
 
 def test_an_item_beyond_reach_is_never_chosen_and_is_reported(workspace, caplog):
     objects = observations_from_boxes([box_around(c) for c in CANS], make_frame(CANS), workspace)
-    workspace["sorted_layout"]["max_reach"] = 400  # the far can (450, 50) is 453 mm out
+    workspace["pick"]["max_reach"] = 400  # the far can (450, 50) is 453 mm out (picks use pick.max_reach)
     chosen = choose_next(objects, workspace)
     assert round(chosen.centroid[0]) == 330
     assert "will be left" in caplog.text and "(450, 50)" in caplog.text

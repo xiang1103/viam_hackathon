@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,11 @@ def load_yaml(name: str) -> dict[str, Any]:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text()) or {}
+
+
+def load_json(name: str) -> dict[str, Any]:
+    path = CONFIG_DIR / name
+    return json.loads(path.read_text()) if path.exists() else {}
 
 
 def save_yaml(name: str, data: dict[str, Any]) -> None:

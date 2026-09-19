@@ -153,5 +153,25 @@ def test_choose_next_leaves_an_item_whose_grasp_target_is_out_of_bounds(workspac
     objects = segment(make_frame(SCENE), workspace)
     first = choose_next(objects, workspace)
     ws = {**workspace, "gripper": {**workspace["gripper"], "xy_offset": [0.0, 0.0]},
-          "bounds": {**workspace["bounds"], "y": [first.centroid[1] + 5, workspace["bounds"]["y"][1]]}}
+          "bounds": {**workspace["bounds"], "y": [first.centroid[1] + 5, workspace["bounds"]["y"][1]]},
+          "pick": {**workspace["pick"], "y_min": None}}  # no pick-only extension: bounds.y applies
     assert choose_next(objects, ws) is not first
+
+
+def test_picks_may_reach_further_than_the_piles_are_laid_out(workspace):
+    """pick.y_min / pick.max_reach loosen the limits for choosing and picking an item only:
+    an item just past bounds.y is chosen when pick.y_min allows it, and left when it does not."""
+    from recycle_sorter.manipulation.safety import UnsafeTarget, check_target
+
+    objects = segment(make_frame(SCENE), workspace)
+    first = choose_next(objects, workspace)
+    edge = first.centroid[1] + 5  # bounds.y ends just inside the chosen item
+    ws = {**workspace, "gripper": {**workspace["gripper"], "xy_offset": [0.0, 0.0]},
+          "bounds": {**workspace["bounds"], "y": [edge, workspace["bounds"]["y"][1]]},
+          "pick": {**workspace["pick"], "y_min": None}}
+    assert choose_next(objects, ws) is not first
+    ws["pick"]["y_min"] = edge - 50
+    assert choose_next(objects, ws) is first
+    with pytest.raises(UnsafeTarget):
+        check_target(first.centroid[0], first.centroid[1], 100, ws)  # a place there is still refused
+    check_target(first.centroid[0], first.centroid[1], 100, ws, ws["pick"]["y_min"])

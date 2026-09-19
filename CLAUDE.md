@@ -53,6 +53,9 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 - Camera calibration lives in config: `machine.yaml` `depth_scale` (this RealSense reads ~6 % long) and `workspace.yaml` `gripper.xy_offset`, both measured on the arm on 2026-09-18. To re-measure x/y: run `scripts/02_hover_test.py`, and while it hovers take a read-only snapshot - the camera looks straight down at the lid.
 - `choose_next` (`perception/select.py`) leaves an item where it is, with a warning, when its grasp target is outside `bounds`. The target is the item's position plus `gripper.xy_offset`, for example a can at the table's -y edge. The next item is picked instead of `UnsafeTarget` stopping the run.
   `bounds.named_*_min` loosen the limits only for taught poses (`survey`, `scan`), never for picks.
+- Picks have their own, looser limits: `pick.max_reach` (760) and `pick.y_min` (-545), used by `choose_next` and `pick_at`.
+  Pile layout and placing keep `sorted_layout.max_reach` (650) and `bounds.y` (-460), so piles are never laid out at the table's edge or beyond the arm's reach.
+  A pick target the arm can't actually reach is refused by the motion planner. That moves nothing and counts as a failed pick. `scripts/05_probe_reach.py` measures the real reach, and it moves the arm.
 - z values in the package mean **fingertip** height. `Manipulator.move_to` adds `tcp_offset` to get the gripper-frame pose for `motion.move`.
 - Safe to run (no motion): `.venv/bin/python -m pytest -q`, and `python -m recycle_sorter.cli --replay <frames dir>`.
 - These **move the arm**: `python -m recycle_sorter.cli` (without `--dry-run` / `--replay`), `scripts/02_hover_test.py`. Use `--step` on first runs.
@@ -93,10 +96,17 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
       Links: each read's `meta["link"]` holds `can`, `survey_box`, `scan_box`, `scan_yolo_index`, and `views`. `#i` in the survey picture is `#i` in the scan picture. The links are logged per can. Without `pictures`, they are also written to `data/debug/<ts>-scan-links.json`.
       `num_ctx` always leaves room for two views (`MAX_VIEWS`). Ollama reloads the model, about 50 s, whenever `num_ctx` changes, so mixing one-view and two-view requests must not change it.
     - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
-    The joint angles are in `config/joint_positions.json`, but the code always moves to the stored gripper poses through the planner, never to raw joint angles.
+    The joint angles are in `config/joint_positions.json`. Survey ↔ scan moves by those fixed joint angles, so it takes the same path every time (`poses.yaml` → `joint_moves`, `Manipulator._joint_move`). Every other move goes through the planner.
+      A raw joint move skips the planner's obstacle check. So it is used only when the arm is already at one of those two taught poses, within `tolerance_deg` on every joint, ignoring whole turns. From anywhere else, such as the first look of a run or after a pick, the planner is used.
+      Joints 1, 4 and 6 (`wrap_joints`) take the shortest way round, so the base turns about 12°, not 372° (`cam_lower_pos` has joint 1 at 280°).
+      The two poses hold the wrist in different arrangements, so each trip still turns joints 4, 5 and 6 by about 144–167°. The user accepted this on 2026-09-19. Re-teaching `cam_lower_pos` by jogging from `cans_view` would remove it.
   - The same arm path without the prompt: `python -m recycle_sorter.cli --mode label --order "..."` or `--want coke=2`.
   - The image half only, with no arm: `python scan_drinks.py --camera|<pic>`. It writes `data/scans/<timestamp>/` with `picture.jpg`, `detected.jpg`, `crops/`, and `results.json`.
   - The text half only: `python -m llm.parse_order`.
+- Model loading: nothing loads during an order, and nothing slow runs on the event loop.
+  - At launch, background threads load the two Ollama models (`llm/warmup.py`) and YOLO (`shared_detector(...).warm_up()`). An order that arrives earlier waits for them.
+  - YOLO is **one** instance per process (`perception/yolo.py: shared_detector`), used for the survey picture, the scan picture and the warm-up. Don't create a `YoloDetector` in pipeline code: `run_sort` makes a new classifier for every order, so each order would reload it (about 2 s).
+  - Every blocking call runs in a thread through `asyncio.to_thread`: YOLO, each VLM read, and order parsing. `YoloDetector` has a lock, so a warm-up and a detection never run at the same time.
 - Needs `ollama serve` running, with `qwen2.5:1.5b` and `qwen2.5vl:7b` pulled.
   - Override the models with the `ORDER_MODEL` and `VISION_MODEL` environment variables.
   - Every request sends `keep_alive: -1`, so both models stay loaded until Ollama stops. Ollama's default unloads them after 5 minutes. Override with `OLLAMA_KEEP_ALIVE_MODELS`, a number or a duration like `"30m"`.

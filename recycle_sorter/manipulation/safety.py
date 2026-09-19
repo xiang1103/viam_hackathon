@@ -7,15 +7,19 @@ class UnsafeTarget(Exception):
     pass
 
 
-def check_target(x: float, y: float, z: float, workspace: dict[str, Any]) -> None:
-    """Reject any gripper target outside the configured workspace, before it reaches the planner."""
+def check_target(x: float, y: float, z: float, workspace: dict[str, Any], y_min: float | None = None) -> None:
+    """Reject any gripper target outside the configured workspace, before it reaches the planner.
+
+    `y_min` replaces the lower y bound for this target: picks pass pick.y_min, so a can near the
+    table's -y edge can be fetched without letting piles be laid out that far."""
     b = workspace["bounds"]
+    y_range = [b["y"][0] if y_min is None else y_min, b["y"][1]]
     z_min = workspace["table_top"] + b["z_min_above_table"]
     problems = []
     if not b["x"][0] <= x <= b["x"][1]:
         problems.append(f"x={x:.0f} outside {b['x']}")
-    if not b["y"][0] <= y <= b["y"][1]:
-        problems.append(f"y={y:.0f} outside {b['y']}")
+    if not y_range[0] <= y <= y_range[1]:
+        problems.append(f"y={y:.0f} outside {y_range}")
     if not z_min <= z <= b["z_max"]:
         problems.append(f"z={z:.0f} outside [{z_min:.0f}, {b['z_max']}]")
     if problems:

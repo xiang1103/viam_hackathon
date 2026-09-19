@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,9 +39,20 @@ class YoloDetector:
     def __init__(self, cfg: dict[str, Any]):
         self.cfg = cfg
         self._model = None
+        # One load and one prediction at a time: the launch warm-up runs in a thread and the first
+        # order may ask for boxes before it is done - it then waits instead of loading a second copy.
+        self._lock = threading.RLock()
 
     @property
     def model(self):
+        with self._lock:
+            return self._load()
+
+    def warm_up(self) -> None:
+        """Load the model and run it once (the first prediction is ~1 s slower than later ones)."""
+        self.detect(np.full((64, 64, 3), 200, np.uint8))
+
+    def _load(self):
         if self._model is None:
             try:
                 import ultralytics
@@ -51,23 +64,29 @@ class YoloDetector:
             if kind == "yoloe":
                 import torch
 
-                # Ultralytics downloads into the current directory: work from the weights folder so
-                # the model (and the 600 MB text encoder) land there once instead of wherever we run.
-                here = os.getcwd()
-                os.chdir(weights.parent)
-                try:
-                    model = ultralytics.YOLOE(weights.name)
-                    # Turning words into prompts needs that text encoder; the result is tiny, so
-                    # keep it and skip the encoder on every later start.
-                    cache = weights.parent / f"{weights.stem}-{'-'.join(classes)}.prompts.pt"
-                    if cache.exists():
-                        prompts = torch.load(cache)
-                    else:
-                        prompts = model.get_text_pe(classes)
-                        torch.save(prompts, cache)
-                    model.set_classes(classes, prompts)
-                finally:
-                    os.chdir(here)
+                # Turning words into prompts needs a text encoder; the result is tiny, so it is
+                # kept and the encoder skipped on every later start.
+                cache = weights.parent / f"{weights.stem}-{'-'.join(classes)}.prompts.pt"
+                if weights.exists() and cache.exists():
+                    # Everything is on disk: no chdir, which would change the working directory
+                    # of the whole process while this may be loading in a background thread.
+                    model = ultralytics.YOLOE(str(weights))
+                    model.set_classes(classes, torch.load(cache))
+                else:
+                    # Ultralytics downloads into the current directory: work from the weights folder
+                    # so the model (and the 600 MB text encoder) land there once.
+                    here = os.getcwd()
+                    os.chdir(weights.parent)
+                    try:
+                        model = ultralytics.YOLOE(weights.name)
+                        if cache.exists():
+                            prompts = torch.load(cache)
+                        else:
+                            prompts = model.get_text_pe(classes)
+                            torch.save(prompts, cache)
+                        model.set_classes(classes, prompts)
+                    finally:
+                        os.chdir(here)
             elif kind == "world":
                 model = ultralytics.YOLOWorld(str(weights))
                 model.set_classes(classes)
@@ -78,6 +97,11 @@ class YoloDetector:
         return self._model
 
     def detect(self, image_bgr: np.ndarray) -> list[Box]:
+        """Blocking (~0.25 s, several seconds on first use): call it from a thread in async code."""
+        with self._lock:
+            return self._detect(image_bgr)
+
+    def _detect(self, image_bgr: np.ndarray) -> list[Box]:
         cfg = self.cfg
         result = self.model.predict(
             image_bgr, conf=cfg.get("confidence", 0.25), iou=cfg.get("iou", 0.5), imgsz=cfg.get("imgsz", 1280), verbose=False
@@ -96,6 +120,20 @@ class YoloDetector:
                 mask = cv2.resize(masks[i].astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
             boxes.append(Box(max(x0, 0), max(y0, 0), min(x1, w), min(y1, h), label, float(conf), mask))
         return boxes
+
+
+_shared: dict[str, YoloDetector] = {}
+_shared_lock = threading.Lock()
+
+
+def shared_detector(cfg: dict[str, Any]) -> YoloDetector:
+    """The one YoloDetector for this config, for the whole process. The survey picture, the scan
+    picture and the launch warm-up all use it, so the model is loaded once."""
+    key = json.dumps(cfg, sort_keys=True)
+    with _shared_lock:
+        if key not in _shared:
+            _shared[key] = YoloDetector(cfg)
+        return _shared[key]
 
 
 def _own_top(blob: np.ndarray, height: np.ndarray, top_band: float) -> np.ndarray:

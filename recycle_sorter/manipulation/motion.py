@@ -7,6 +7,7 @@ from typing import Any
 
 from viam.components.arm import Arm
 from viam.components.gripper import Gripper
+from viam.proto.component.arm import JointPositions
 from viam.proto.common import GeometriesInFrame, Geometry, Pose, PoseInFrame, RectangularPrism, Vector3, WorldState
 from viam.proto.service.motion import Constraints, LinearConstraint
 from viam.services.motion import MotionClient
@@ -16,11 +17,38 @@ from .safety import UnsafeTarget, check_frame_pose, check_target
 log = logging.getLogger(__name__)
 
 
+def _same_joints(a: list[float], b: list[float], wrap: set[int], tolerance: float) -> bool:
+    """Every joint within `tolerance` degrees; for `wrap` joints a whole turn counts as no difference."""
+    if len(a) != len(b):
+        return False
+    for i, (x, y) in enumerate(zip(a, b)):
+        d = (x - y + 180.0) % 360.0 - 180.0 if i in wrap else x - y
+        if abs(d) > tolerance:
+            return False
+    return True
+
+
+def _nearest_turn(target: list[float], now: list[float], wrap: set[int], limit: float = 360.0) -> list[float]:
+    """`target` with each `wrap` joint moved by whole turns to the equivalent angle nearest `now`,
+    kept within +-limit: the same arm pose, reached by the shortest rotation."""
+    out = list(target)
+    for i in wrap:
+        t = out[i] + 360.0 * round((now[i] - out[i]) / 360.0)
+        if t > limit:
+            t -= 360.0
+        elif t < -limit:
+            t += 360.0
+        out[i] = t
+    return out
+
+
 class Manipulator:
     """Thin, safety-checked wrapper over arm + gripper + motion service.
 
-    Every arm motion goes through the motion planner (never raw joint commands), so
-    the workcell obstacles in the machine config are respected on every move.
+    Every arm motion goes through the motion planner, so the workcell obstacles in the machine
+    config are respected on every move. The one exception is poses.yaml `joint_moves`: between
+    taught poses high above the table (survey <-> scan) the arm moves by fixed joint angles, so it
+    takes the same path every time - and only when it is already at one of those poses.
 
     dry_run: log every action, execute nothing.
     step:    wait for Enter before every motion.
@@ -36,6 +64,7 @@ class Manipulator:
         poses: dict[str, Any],
         dry_run: bool = False,
         step: bool = False,
+        joints: dict[str, list[float]] | None = None,
     ):
         self.arm, self.gripper, self.motion = arm, gripper, motion
         self.workspace, self.poses = workspace, poses
@@ -46,6 +75,7 @@ class Manipulator:
         self.trust_is_holding = machine_cfg.get("trust_is_holding", False)
         self.normal_speed = machine_cfg.get("arm_speed")
         self.dry_run, self.step = dry_run, step
+        self.joints = joints or {}  # config/joint_positions.json: taught joint angles by name, degrees
 
     def _world_state(self, obstacles: list[dict[str, Any]]) -> WorldState | None:
         """Extra obstacles for the planner (workspace.yaml `obstacles`), boxes in the reference frame."""
@@ -81,13 +111,15 @@ class Manipulator:
         if not await self.motion.move(self.move_frame, dest, world_state=self.world_state, timeout=self.timeout):
             raise RuntimeError("motion.move returned False")
 
-    async def move_to(self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False) -> None:
+    async def move_to(
+        self, x: float, y: float, z: float, theta: float = 0.0, linear: bool = False, y_min: float | None = None
+    ) -> None:
         """Put the FINGERTIPS at (x, y, z) in the world frame, gripper pointing straight down.
 
         Bounds are checked on the fingertip position; the pose sent to the planner is
         the gripper frame origin, tcp_offset above it, which has its own floor.
         """
-        check_target(x, y, z, self.workspace)
+        check_target(x, y, z, self.workspace, y_min)  # y_min: see check_target (picks only)
         frame_z = z + self.workspace["gripper"]["tcp_offset"]
         floor = self.workspace["bounds"]["frame_z_min"]
         if frame_z < floor:
@@ -108,8 +140,37 @@ class Manipulator:
         await self._confirm(f"move to '{name}' pose")
         if self.dry_run:
             return
-        await self._move(Pose(**{k: float(p[k]) for k in ("x", "y", "z", "o_x", "o_y", "o_z", "theta")}))
+        if not await self._joint_move(name):
+            await self._move(Pose(**{k: float(p[k]) for k in ("x", "y", "z", "o_x", "o_y", "o_z", "theta")}))
         await asyncio.sleep(0.3)  # let the wrist camera settle before a capture
+
+    async def _joint_move(self, name: str) -> bool:
+        """Move to `name` by its taught joint angles, if poses.yaml `joint_moves` allows it here.
+
+        Only between the poses listed there, and only when the arm is at one of them now (every
+        joint within tolerance_deg, whole turns ignored): a raw joint move skips the planner's
+        obstacle check, which is safe from one high taught pose to another, not from anywhere.
+        Returns False, having moved nothing, when the planner should be used instead."""
+        cfg = self.poses.get("joint_moves") or {}
+        table = cfg.get("poses") or {}
+        if name not in table or self.arm is None or any(j not in self.joints for j in table.values()):
+            return False
+        wrap = {j - 1 for j in cfg.get("wrap_joints", [])}
+        try:
+            now = list((await self.arm.get_joint_positions(timeout=self.timeout)).values)
+        except Exception as e:  # can't tell where the arm is: don't risk a raw joint move
+            log.warning("could not read the arm's joints (%s) - using the planner", e)
+            return False
+        at = next((p for p, j in table.items() if _same_joints(now, self.joints[j], wrap, cfg.get("tolerance_deg", 3))), None)
+        if at is None:
+            log.info("not at a taught joint pose - planning the move to '%s'", name)
+            return False
+        if at == name:
+            return True  # already there
+        target = _nearest_turn(self.joints[table[name]], now, wrap)
+        log.info("'%s' -> '%s' by fixed joint angles %s", at, name, [round(v, 1) for v in target])
+        await self.arm.move_to_joint_positions(JointPositions(values=target), timeout=self.timeout)
+        return True
 
     async def set_speed(self, degs_per_sec: float | None) -> None:
         """Arm joint speed. The xArm driver ignores the motion service's speed, so this is the only lever."""

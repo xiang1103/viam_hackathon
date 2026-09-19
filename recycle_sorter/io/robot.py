@@ -18,12 +18,12 @@ from viam.robot.client import RobotClient
 from viam.services.motion import MotionClient
 from viam.services.vision import VisionClient
 
-from ..config import load_yaml, viam_credentials
+from ..config import load_json, load_yaml, viam_credentials
 from ..manipulation.motion import Manipulator
 from ..perception import viam_vision
 from ..perception.frames import cam_to_world_matrix
 from ..perception.segment import segment
-from ..perception.yolo import YoloDetector, observations_from_boxes
+from ..perception.yolo import observations_from_boxes, shared_detector
 from ..types import Frame, Intrinsics, ObjectObservation
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,6 @@ class LiveRobot:
         self._camera: Camera | None = None
         self._intrinsics: Intrinsics | None = None
         self._vision: dict[str, VisionClient] | None = None
-        self._yolo: YoloDetector | None = None
         self.last_rejected: list = []  # (YOLO box, reason) that the last detect() did not turn into an item
 
     # Resolved on first use, so arm-only actions work on a machine with no camera.
@@ -89,6 +88,7 @@ class LiveRobot:
             load_yaml("poses.yaml"),
             dry_run=dry_run,
             step=step,
+            joints=load_json("joint_positions.json"),
         )
         await manip.set_speed(cfg.get("arm_speed"))
         return cls(machine, cfg, manip)
@@ -170,10 +170,10 @@ class LiveRobot:
         """Objects in the unsorted zone, from Viam vision or the OpenCV fallback (machine.yaml -> perception)."""
         how = self.cfg.get("perception", "depth")
         if how == "yolo":
-            if self._yolo is None:
-                self._yolo = YoloDetector(self.cfg["yolo"])
+            # In a thread: YOLO takes ~0.25 s a picture and must not stall the event loop.
+            boxes = await asyncio.to_thread(shared_detector(self.cfg["yolo"]).detect, frame.color)
             self.last_rejected = []  # YOLO boxes that did not become an item, with why: drawn in the survey picture
-            return observations_from_boxes(self._yolo.detect(frame.color), frame, self.manip.workspace, self.last_rejected)
+            return observations_from_boxes(boxes, frame, self.manip.workspace, self.last_rejected)
         if how != "viam":
             return segment(frame, self.manip.workspace)
         vision = self.cfg["vision"]

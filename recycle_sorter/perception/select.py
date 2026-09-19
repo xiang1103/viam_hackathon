@@ -26,8 +26,10 @@ def choose_next(
     from ..manipulation.safety import UnsafeTarget, check_target
 
     max_open = workspace["gripper"]["max_open"]
-    reach = workspace["sorted_layout"]["max_reach"]
-    out_of_reach = [o for o in objects if np.hypot(*(o.grasp_xy if o.grasp_xy is not None else o.centroid)) > reach]
+    # Picks have their own limits (pick.max_reach / pick.y_min); piles keep the layout's. Reach is
+    # measured to where the arm actually goes: the grasp point plus the calibration correction.
+    reach = workspace["pick"].get("max_reach", workspace["sorted_layout"]["max_reach"])
+    out_of_reach = [o for o in objects if np.hypot(*grasp_pose(o, workspace)[:2]) > reach]
     if out_of_reach:
         log.warning(
             "%d item(s) are further than %d mm from the arm base and will be left: %s",
@@ -37,7 +39,7 @@ def choose_next(
     for o in objects:
         x, y, z, _ = grasp_pose(o, workspace)
         try:
-            check_target(x, y, z + workspace["pick"]["approach"], workspace)
+            check_target(x, y, z + workspace["pick"]["approach"], workspace, workspace["pick"].get("y_min"))
         except UnsafeTarget as e:
             out_of_bounds.append(o)
             log.warning("item at (%.0f, %.0f) is left: its grasp target is outside the bounds (%s)",

@@ -46,7 +46,7 @@ class LocalLabelClassifier:
             load_dotenv()  # the reader takes OLLAMA_URL / VISION_MODEL from the environment when it is imported
             from llm.classify_image import classify_image as read  # imported here: tests pass a fake
         self.read = read  # read(jpeg) or read([jpeg, jpeg], view_names) -> an llm.classify_image answer
-        self._detect = detect  # scan view: YOLO on the scan picture; loaded on first use, tests pass a fake
+        self._detect = detect  # scan view: YOLO on the scan picture (the shared model); tests pass a fake
         self.min_side = int(cfg.get("min_crop_side", 640))
         self.pad = float(cfg.get("crop_pad", 0.08))
         self.view: str = cfg.get("view", "survey")
@@ -94,9 +94,10 @@ class LocalLabelClassifier:
     def detect(self, image: np.ndarray) -> list:
         if self._detect is None:
             from ..config import load_yaml
-            from ..perception.yolo import YoloDetector
+            from ..perception.yolo import shared_detector
 
-            self._detect = YoloDetector(load_yaml("machine.yaml")["yolo"]).detect
+            # The same model as the survey picture's (loaded once per process, warmed at launch).
+            self._detect = shared_detector(load_yaml("machine.yaml")["yolo"]).detect
         return self._detect(image)
 
     def _box_crop(self, image: np.ndarray, b) -> np.ndarray:
@@ -104,7 +105,7 @@ class LocalLabelClassifier:
         px, py = int(w * self.pad), int(h * self.pad)
         return image[max(b.y0 - py, 0) : b.y1 + py, max(b.x0 - px, 0) : b.x1 + px].copy()
 
-    def _link(self, seen: list, scan: Frame, max_hidden: float) -> tuple[list, list[int], list]:
+    def _link(self, seen: list, scan: Frame, boxes: list, max_hidden: float) -> tuple[list, list[int], list]:
         """Link each item from the survey to at most one YOLO box in the scan picture, and back.
 
         The item's projected 3D box only says roughly where it is (the calibration is off by tens
@@ -115,7 +116,6 @@ class LocalLabelClassifier:
         every YOLO box). Boxes no item links to are the cans seen only in the scan picture."""
         from ..perception.scan import ScanView
 
-        boxes = self.detect(scan.color)
         centre = lambda x, y, w, h: np.array([x + w / 2, y + h / 2])  # noqa: E731
         pairs = []
         for i, v in enumerate(seen):
@@ -153,7 +153,8 @@ class LocalLabelClassifier:
         from ..perception.scan import views
 
         projected = views(objects, scan, survey, workspace)
-        seen, box_of, boxes = self._link(projected, scan, workspace["scan"]["max_hidden"])
+        boxes = await asyncio.to_thread(self.detect, scan.color)  # ~0.25 s: off the event loop
+        seen, box_of, boxes = self._link(projected, scan, boxes, workspace["scan"]["max_hidden"])
         self.last_views = seen
         results = []
         for i, (o, v) in enumerate(zip(objects, seen)):

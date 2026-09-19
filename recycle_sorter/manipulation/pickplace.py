@@ -14,20 +14,21 @@ async def pick_at(m: Manipulator, x: float, y: float, z: float, theta: float = 0
     Returns grab()'s verdict on whether something is held.
     """
     p = m.workspace["pick"]
+    y_min = p.get("y_min")  # picks may reach further toward -y than pile placement (bounds.y)
     await m.open()
     try:
-        await m.move_to(x, y, z + p["approach"], theta)
+        await m.move_to(x, y, z + p["approach"], theta, y_min=y_min)
     except Exception as e:
         # A 180 degree flip is the same grasp for a parallel gripper, but can be
         # reachable when the first wrist angle is not.
         log.warning("approach failed (%s); retrying with theta+180", e)
         theta += 180.0
-        await m.move_to(x, y, z + p["approach"], theta)
+        await m.move_to(x, y, z + p["approach"], theta, y_min=y_min)
     async with m.slow():
-        await m.move_to(x, y, z, theta, linear=True)
+        await m.move_to(x, y, z, theta, linear=True, y_min=y_min)
         held = await m.grab()
     # Raise before any lateral move so the object does not drag across the table.
-    await m.move_to(x, y, z + p["lift"], theta, linear=True)
+    await m.move_to(x, y, z + p["lift"], theta, linear=True, y_min=y_min)
     return held
 
 
