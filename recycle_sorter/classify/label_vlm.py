@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import cv2
@@ -11,6 +12,45 @@ from ..types import Classification, Frame, ObjectObservation
 CONFIDENCE = {"high": 0.9, "medium": 0.7, "low": 0.4}
 SAME_SPOT_MM = 25.0  # an item this close to where one was read last look is the same, unmoved item
 VIEW_NAMES = {"survey": "from above, farther away", "scan": "closer, from the side at an angle"}
+SAME_LOOK = 0.85  # how alike (0-1) two crops' colours must be for "the same can": see signature()
+SURE = 0.9  # a read this confident settles one item of an order (the reader's "high")
+
+
+@dataclass
+class Remembered:
+    """What stood at a spot the last time it was read, and what it looked like."""
+
+    xy: np.ndarray
+    look: np.ndarray  # signature() of the crop that was read
+    result: Classification
+
+
+# One memory for the whole process. run_sort builds a new classifier for every order, so a memory kept
+# on the classifier was gone by the next order and every can on the table was read again (~10 s each).
+SESSION_MEMORY: list[Remembered] = []
+
+
+def signature(crop: np.ndarray) -> np.ndarray:
+    """A colour fingerprint of the middle of a crop: hue x saturation, plus brightness, as one histogram.
+
+    A remembered label is only reused when the can at that spot still LOOKS the same: between orders
+    someone may have swapped it. Measured 2026-09-19 on saved frames with likeness() below: two pictures
+    of the same unmoved can score 0.92 (median), different cans 0.59; at SAME_LOOK = 0.85 a different can
+    passes in under 1 % of pairs (and it must also stand within SAME_SPOT_MM of the old one), while ~14 %
+    of unmoved cans are read again for nothing - which only costs the ~10 s it would have cost anyway."""
+    h, w = crop.shape[:2]
+    mid = crop[int(h * 0.2) : max(int(h * 0.8), int(h * 0.2) + 1), int(w * 0.2) : max(int(w * 0.8), int(w * 0.2) + 1)]
+    hsv = cv2.cvtColor(mid, cv2.COLOR_BGR2HSV)
+    hist = np.concatenate([
+        cv2.calcHist([hsv], [0, 1], None, [12, 4], [0, 180, 0, 256]).ravel(),
+        cv2.calcHist([hsv], [2], None, [6], [0, 256]).ravel(),
+    ]).astype(np.float32)
+    return hist / max(float(hist.sum()), 1.0)
+
+
+def likeness(a: np.ndarray, b: np.ndarray) -> float:
+    """Histogram intersection of two signatures: 1 = identical colours, 0 = nothing in common."""
+    return float(np.minimum(a, b).sum())
 
 
 class LocalLabelClassifier:
@@ -39,6 +79,7 @@ class LocalLabelClassifier:
         cfg: dict[str, Any],
         read: Callable[..., Any] | None = None,
         detect: Callable[[np.ndarray], list] | None = None,
+        memory: list[Remembered] | None = None,
     ):
         if read is None:
             from dotenv import load_dotenv
@@ -54,7 +95,12 @@ class LocalLabelClassifier:
         self.last_views: list = []  # scan view: kept for the debug picture
         self.last_scan_only: list[Classification] = []  # scan view: cans YOLO found only in the scan picture
         self.last_links: list[dict] = []  # scan view: which survey box and scan box each read came from
-        self._known: list[tuple[np.ndarray, Classification]] = []  # scan view: what each spot held last look
+        # scan view: what each spot held when it was last read. app.make_classifier passes SESSION_MEMORY, so
+        # it outlives this classifier; on its own (tests) a classifier starts with an empty one.
+        self.memory: list[Remembered] = [] if memory is None else memory
+        # scan view, set by run_sort for an ORDER: {label: how many are still to fetch}. Reading stops as soon
+        # as sure reads cover it; None = read everything (a sort needs every label).
+        self.wanted: dict[str, int] | None = None
 
     @property
     def needs_scan(self) -> bool:
@@ -157,19 +203,41 @@ class LocalLabelClassifier:
         boxes = await asyncio.to_thread(self.detect, scan.color)  # ~0.25 s: off the event loop
         seen, box_of, boxes = self._link(projected, scan, boxes, workspace["scan"]["max_hidden"])
         self.last_views = seen
-        results = []
+        def covered() -> bool:
+            """An order, and sure reads already account for every item of it: nothing more needs reading."""
+            if not self.wanted:
+                return False
+            sure = [r.label for r in results if r is not None and r.confidence >= SURE]
+            return all(sure.count(label) >= n for label, n in self.wanted.items() if n > 0)
+
+        def link_of(i: int) -> dict:
+            o, v = objects[i], seen[i]
+            return {"can": i, "survey_box": list(o.bbox) if o.bbox[2] else None,
+                    "scan_box": list(v.box) if v.readable else None,
+                    "scan_yolo_index": box_of[i] if box_of[i] >= 0 else None}
+
+        # What each item looks like now: its scan crop when it has one (the view the label is read from).
+        tops = [self._crop(o, survey) if o.crop is not None and o.crop.size else None for o in objects]
+        looks = [signature(v.crop if v.readable else t) if (v.readable or t is not None) else None
+                 for v, t in zip(seen, tops)]
+
+        # 1. Remembered first - they cost nothing. The spot must match AND the can must still look the same.
+        results: list[Classification | None] = [None] * len(objects)
+        for i, o in enumerate(objects):
+            m = next((m for m in self.memory if np.linalg.norm(m.xy - o.centroid) < SAME_SPOT_MM), None)
+            if m is not None and looks[i] is not None and likeness(m.look, looks[i]) >= SAME_LOOK:
+                link = {**link_of(i), "views": m.result.meta.get("link", {}).get("views", [])}
+                results[i] = Classification(m.result.label, m.result.confidence,
+                                            {**m.result.meta, "link": link, "remembered": True})
+
+        # 2. Read the rest, one request each (~10 s) - until the order is covered.
         for i, (o, v) in enumerate(zip(objects, seen)):
-            link = {
-                "can": i,
-                "survey_box": list(o.bbox) if o.bbox[2] else None,
-                "scan_box": list(v.box) if v.readable else None,
-                "scan_yolo_index": box_of[i] if box_of[i] >= 0 else None,
-            }
-            before = next((r for c, r in self._known if np.linalg.norm(c - o.centroid) < SAME_SPOT_MM), None)
-            top = self._crop(o, survey) if o.crop is not None and o.crop.size else None
-            if before is not None:
-                link["views"], r = before.meta.get("link", {}).get("views", []), before
-                results.append(Classification(r.label, r.confidence, {**r.meta, "link": link, "remembered": True}))
+            if results[i] is not None:
+                continue
+            link, top = link_of(i), tops[i]
+            if covered():
+                link["views"] = []
+                results[i] = Classification("unread", 0.0, {"why": "the order was already covered", "link": link})
                 continue
             if top is not None and v.readable and not self.survey_crop:
                 top = None  # a top-view survey shows the lid, not the label: the scan crop alone is read
@@ -186,13 +254,21 @@ class LocalLabelClassifier:
                 link["views"] = []
                 r = Classification("unknown", 0.0, {"why": "no picture of the item"})
             r.meta["link"] = link
-            results.append(r)
-        self._known = [(o.centroid, r) for o, r in zip(objects, results)]
+            results[i] = r
 
-        # Cans YOLO found only in the scan picture: read too, but they have no position to pick from.
+        # Remember what was read (not what was skipped), replacing whatever was known about those spots.
+        read = [(o, look, r) for o, look, r in zip(objects, looks, results) if look is not None and r.label != "unread"]
+        self.memory[:] = [m for m in self.memory
+                          if not any(np.linalg.norm(m.xy - o.centroid) < SAME_SPOT_MM for o in objects)]
+        self.memory.extend(Remembered(o.centroid.copy(), look, r) for o, look, r in read)
+
+        # Cans YOLO found only in the scan picture: read too, but they have no position to pick from -
+        # so not once an order is covered: they could not be fetched anyway.
         linked_boxes = {j for j in box_of if j >= 0}
         self.last_scan_only = []
         for n, (j, b) in enumerate((j, b) for j, b in enumerate(boxes) if j not in linked_boxes):
+            if covered():
+                break
             r = await self._read(self._box_crop(scan.color, b))
             r.meta["link"] = {"can": f"scan-{n}", "survey_box": None,
                               "scan_box": [b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0],

@@ -371,3 +371,101 @@ def test_label_mode_reads_from_the_scan_pose_unless_cam_pos():
     assert make_classifier("label", sort_cfg).needs_scan
     assert not make_classifier("label_cam_pos", sort_cfg).needs_scan
     assert "scan" in load_yaml("poses.yaml")["named"]
+
+
+# --- label memory across orders, and stopping once an order is covered -----------------------------
+
+def _shelf(colors):
+    """Cans in a row and the survey picture they are in: each can's box is painted its own colour. YOLO
+    finds nothing in the scan picture, so each can is read from its box in the survey picture."""
+    frame, cans = survey_frame(), []
+    frame.color[:] = (255, 255, 255)
+    for k, bgr in enumerate(colors):
+        box = (60 + 140 * k, 100, 90, 130)
+        o = seen_in_survey(330 + 70 * k, -100 + 70 * k, box)
+        frame.color[box[1] : box[1] + box[3], box[0] : box[0] + box[2]] = bgr
+        o.crop = frame.color[box[1] : box[1] + box[3], box[0] : box[0] + box[2]].copy()
+        cans.append(o)
+    return cans, frame
+
+
+def _reader(answers, calls):
+    """A fake VLM: answers in turn with (label, confidence)."""
+    def read(images, view_names=None):
+        label, confidence = answers[len(calls)]
+        calls.append(label)
+        return SimpleNamespace(label=label, confidence=confidence, visible_text="", closest_reference="")
+    return read
+
+
+RED, SILVER, BLUE, GREEN = (30, 30, 200), (190, 190, 190), (200, 60, 30), (40, 160, 40)
+
+
+async def look(clf, colors, workspace):
+    cans, frame = _shelf(colors)
+    return await clf.classify_scan(cans, frame, frame, workspace)
+
+
+async def test_labels_are_remembered_from_one_order_to_the_next(workspace):
+    """run_sort builds a new classifier for every order. With the session's memory passed in, a can that
+    stands where it stood and looks as it looked is not read again (~10 s each) - unless it was swapped."""
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+
+    memory, calls = [], []
+    read = _reader([("coke", "high"), ("water", "high"), ("energy_drink", "high"), ("ginger_ale", "high")], calls)
+    new_order = lambda: LocalLabelClassifier({"view": "scan"}, read=read, detect=lambda image: [], memory=memory)  # noqa: E731
+
+    first = await look(new_order(), [RED, SILVER, BLUE], workspace)
+    assert [r.label for r in first] == ["coke", "water", "energy_drink"] and len(calls) == 3
+
+    second = await look(new_order(), [RED, SILVER, BLUE], workspace)
+    assert [r.label for r in second] == ["coke", "water", "energy_drink"] and len(calls) == 3  # nothing was read
+    assert all(r.meta["remembered"] for r in second)
+
+    # Someone swaps the silver can for a green one on the same spot: that one is read again, the others not.
+    third = await look(new_order(), [RED, GREEN, BLUE], workspace)
+    assert [r.label for r in third] == ["coke", "ginger_ale", "energy_drink"] and len(calls) == 4
+    assert [bool(r.meta.get("remembered")) for r in third] == [True, False, True]
+
+
+async def test_reading_stops_once_sure_reads_cover_the_order(workspace):
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+
+    memory, calls = [], []
+    answers = [("water", "high"), ("coke", "high"), ("energy_drink", "high"), ("ginger_ale", "high")]
+    clf = LocalLabelClassifier({"view": "scan"}, read=_reader(answers, calls), detect=lambda image: [], memory=memory)
+    clf.wanted = {"coke": 1}
+    results = await look(clf, [SILVER, RED, BLUE, GREEN], workspace)
+    assert [r.label for r in results] == ["water", "coke", "unread", "unread"] and len(calls) == 2
+    assert all(r.confidence == 0.0 for r in results[2:])  # never picked, never counted
+
+    # What was skipped was not remembered as anything: the next order reads those two, and only those.
+    nxt = LocalLabelClassifier({"view": "scan"}, read=_reader(answers, calls), detect=lambda image: [], memory=memory)
+    nxt.wanted = {"ginger_ale": 1}
+    results = await look(nxt, [SILVER, RED, BLUE, GREEN], workspace)
+    assert [r.label for r in results] == ["water", "coke", "energy_drink", "ginger_ale"] and len(calls) == 4
+
+
+async def test_an_unsure_read_or_a_missing_label_does_not_stop_the_reading(workspace):
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+
+    calls = []
+    answers = [("coke", "medium"), ("water", "high"), ("coke", "high"), ("energy_drink", "high")]
+    clf = LocalLabelClassifier({"view": "scan"}, read=_reader(answers, calls), detect=lambda image: [])
+    clf.wanted = {"coke": 1}
+    await look(clf, [RED, SILVER, RED, BLUE], workspace)
+    assert len(calls) == 3  # the first coke was only a "medium": kept reading until a sure one
+
+    calls.clear()
+    clf = LocalLabelClassifier({"view": "scan"}, read=_reader(answers, calls), detect=lambda image: [])
+    clf.wanted = {"ginger_ale": 1}  # not on the table: every can has to be read to know that
+    await look(clf, [RED, SILVER, RED, BLUE], workspace)
+    assert len(calls) == 4
+
+
+def test_an_order_mode_classifier_gets_the_sessions_memory():
+    from recycle_sorter.classify import label_vlm
+    from recycle_sorter.config import load_yaml
+
+    a, b = (app.make_classifier("label", load_yaml("sort.yaml")) for _ in range(2))
+    assert a is not b and a.memory is b.memory is label_vlm.SESSION_MEMORY
