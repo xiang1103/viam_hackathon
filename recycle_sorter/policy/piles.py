@@ -66,8 +66,13 @@ class PileLayout:
         if problems:
             raise ValueError("; ".join(problems))
 
-    def plan(self, demand: dict[str, tuple[int, float]]) -> None:
+    def plan(self, demand: dict[str, tuple[int, float]], spare: int | None = None) -> None:
         """demand: pile key -> (items seen, largest item length in mm).
+
+        `spare` overrides piles.spare_slots. A sort keeps a spare slot per pile for items hidden under
+        others; an ORDER knows exactly how many it will fetch, and passes 0 so the room goes to
+        giving every ordered class a pile of its own (2026-09-19: with three classes ordered, the
+        spares left no room for the third pile and a ginger ale was set down on the reject spot).
 
         Reject is reserved first: whatever else runs out of room, there must be
         somewhere to put an item once it is in the gripper. Then the biggest classes,
@@ -76,9 +81,10 @@ class PileLayout:
         # Reject can receive any class, so space it for the largest item seen.
         largest = max([size for _, size in demand.values()], default=0.0)
         demand = {REJECT: (0, largest), **demand}
+        spare = self.cfg["spare_slots"] if spare is None else spare
         for key, (count, size) in sorted(demand.items(), key=lambda kv: (kv[0] != REJECT, -kv[1][0], kv[0])):
             if key not in self.zones:
-                self._allocate(key, count + self.cfg["spare_slots"], size)
+                self._allocate(key, max(count + spare, 1), size)
         if REJECT not in self.zones:
             raise ValueError("the sorted areas are too small for even a reject pile - enlarge sorted_areas")
 

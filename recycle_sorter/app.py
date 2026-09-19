@@ -290,7 +290,7 @@ async def run_sort(
                 demand = {k: (min(n, wanted[k]), size) for k, (n, size) in demand.items() if k in wanted}
             nothing = "nothing in the unsorted zone" if wanted is None else "none of the order is on the table"
             log.info("%s: %s", "assessment" if wanted is None else "to fetch", {k: n for k, (n, _) in demand.items()} or nothing)
-            layout.plan(demand)
+            layout.plan(demand, spare=0 if wanted is not None else None)  # an order knows its counts: no spare slots
             if pictures is None:
                 log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
             planned = True
@@ -375,7 +375,12 @@ async def run_sort(
             continue
 
         failures = 0
-        sorted_counts[key] += 1
+        ordered = policy.pile_key(result)
+        if wanted is not None and key != ordered:
+            # next_slot found no room for this class's own pile and used the reject spot. It was still
+            # fetched: count it as what it is, or the order reports it missing and a "reject" fetched.
+            log.warning("the %s was fetched but set down on the %s spot: no room for a pile of its own", ordered, key)
+        sorted_counts[ordered if wanted is not None else key] += 1
         expected = max((expected or 1) - 1, 0)
         if wanted is not None:
             remaining[policy.pile_key(result)] -= 1
