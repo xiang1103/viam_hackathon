@@ -103,8 +103,10 @@ async def main() -> None:
     # (~2 s). Both stay loaded afterwards (keep_alive). Ollama queues requests, so an order or a
     # crop sent before the warm-up finishes simply waits for it.
     # One task, vision model first: loading the 7B model second makes Ollama unload the order model.
-    warming = asyncio.create_task(asyncio.to_thread(warm_all))
-    warming.add_done_callback(lambda t: t.exception() and print(f"model warm-up failed: {t.exception()}"))
+    # Silent: anything printed here would land in the middle of the `command>` prompt. If Ollama is
+    # down, the first command reports it anyway.
+    warming = asyncio.create_task(asyncio.to_thread(warm_all, lambda msg: None))
+    warming.add_done_callback(lambda t: t.exception())  # retrieve the error so asyncio doesn't print it
 
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
     try:
