@@ -24,6 +24,8 @@ bounds:
   named_x_min: 20        # taught poses (survey) hang high above the table and may sit closer to the base than a pick can;
                          # 20 (was 50) admits the lower survey (cam_lower_pos, x = 37), which the arm has stood at
   frame_z_max: 750
+  named_y_min: -500      # taught poses may reach past the pick limit toward -y (table ends ~ -530): the
+                         # hand-taught scan pose (cam_lower_pos, 2026-09-19) sits at y = -487
 
 # Viewpoint for the top-down map in data/debug/layout*.png, so it matches how you see
 # the table: "front" = you face the arm (arm at top), "behind" = you stand behind it
@@ -101,13 +103,19 @@ gripper:
   # How far below the item's top the fingertips go (true mm now that depth_scale makes heights right).
   # Tried on the arm 2026-09-18: ~25 held a can by its tapered shoulder and the grip was poor; ~37 looked
   # a little too low (palm close to the lid). 30 is just below the shoulder, on the straight wall.
-  finger_depth: 30
+  # 2026-09-18 evening, survey back at cans_view: with 30 the fingers came down a few mm too low and the can
+  # slipped as it lifted -> 25. (tcp_offset stays 70: it is hardware-proven, and the blind static cycle
+  # depends on it.) If the grip now lands on the tapered shoulder, go back toward 28-30.
+  finger_depth: 25
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
   # Added to every grasp point (mm, arm frame: +x = away from the arm, +y = toward the power strip side).
   # If the hover test leaves the gripper N mm short of the can, that is +N in x; N mm toward -y of it, +N in y.
   # Measured 2026-09-18 from a close-up taken while hovering over a can (lid circle vs gripper axis, no depth
   # involved): with depth_scale 0.94 the gripper sat 9 mm short and 11 mm to the left (+y) of the can.
-  xy_offset: [9, -11]
+  # 2026-09-18 evening, survey back at cans_view: grasps landed toward the power strip (+y) of the can with
+  # y = -7 (~10 mm), and still well toward it with -17, so y -> -27. Direction check: gripper on the
+  # power-strip side of the can = lower y; on the far side = raise y.
+  xy_offset: [9, -27]
 
 pick:
   approach: 150        # standoff above the grasp / release height before descending (as move_arm.py)

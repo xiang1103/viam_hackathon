@@ -16,12 +16,12 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "coke": {
         "order": "regular Coca-Cola only (also 'coke', 'coca cola', 'classic coke')",
         "visual": "Regular Coca-Cola. RED can or bottle label with the white cursive "
-                  "'Coca-Cola' script and white wave ribbon. NOT silver, NOT black.",
+                  "'Coca-Cola' script and white wave ribbon. NOT silver, NOT black. A coke can MUST BE RED. If it's not red, it's not coke. And most likley diet coke.",
     },
     "diet_coke": {
         "order": "Diet Coke or Coke Zero (also 'diet coke', 'coke zero', 'sugar-free coke'). If a coke can is not red, it is most likely a diet coke.",
         "visual": "Diet Coke: SILVER/grey can with the word 'Diet' and red 'Coke' lettering. "
-                  "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'.",
+                  "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'." ,
     },
     "water": {
         "order": "plain / still bottled water (also 'water', 'bottle of water', 'water bottle'; "

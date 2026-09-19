@@ -271,28 +271,43 @@ async def test_local_label_reader_maps_its_answers_to_piles():
     assert all(j[:2] == b"\xff\xd8" for j in sent)  # JPEG bytes, as the reader expects
 
 
-async def test_local_label_reader_reads_labels_from_the_scan_picture(workspace):
-    """view: scan - crops come from the closer scan picture; a hidden can is deferred, not misread,
-    and a can that has not moved since the last look is not read again (~10 s per read)."""
-    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+async def test_local_label_reader_sends_the_top_and_the_closer_view_together(workspace):
+    """view: scan - each can goes to the reader as two crops (survey + scan picture) in one request.
+    The scan crop is the YOLO box nearest the can's projection, even when the projection is off;
+    a can hidden there, or with no YOLO box near it, is read from its survey crop alone; a can that
+    has not moved since the last look is not read again (~10 s per read)."""
+    from recycle_sorter.classify.label_vlm import VIEW_NAMES, LocalLabelClassifier
+    from recycle_sorter.perception.scan import views
+    from recycle_sorter.perception.yolo import Box
 
-    sent = []
+    calls = []
 
-    def read(jpeg: bytes):
-        sent.append(jpeg)
+    def read(images, view_names=None):
+        calls.append((images, view_names))
         return SimpleNamespace(label="coke", confidence="high", visible_text="Coca-Cola", closest_reference="coke")
 
-    clf = LocalLabelClassifier({"view": "scan"}, read=read)
-    assert clf.needs_scan
-    near, behind, beside = can(350, 0), can(520, 0), can(400, 150)
-    frame = eye_level_frame()
-    results = await clf.classify_scan([behind, near, beside], frame, frame, workspace)
-    assert [r.label for r in results] == ["unseen", "coke", "coke"]
-    assert results[0].meta["defer"] and len(sent) == 2 and len(clf.last_views) == 3
+    near, behind, beside, lonely = (seen_in_survey(x, y, (100, 100, 90, 130)) for x, y in
+                                    [(350, 0), (520, 0), (400, 150), (380, -170)])
+    for o in (near, behind, beside, lonely):
+        o.crop = np.full((130, 90, 3), 120, np.uint8)
+    frame = survey_frame()
+    projected = views([near, beside, lonely], frame, frame, workspace)
+    # YOLO in the scan picture finds `near` and `beside`, 25 px right of their projection (calibration
+    # is off), and nothing near `lonely`.
+    yolo = [Box(x + 25, y, x + w + 25, y + h, "can", 0.8) for x, y, w, h in (projected[0].box, projected[1].box)]
+    clf = LocalLabelClassifier({"view": "scan"}, read=read, detect=lambda image: yolo)
 
-    near_again = can(352, 1)  # the same can, re-measured on the next look
-    again = await clf.classify_scan([near_again], frame, frame, workspace)
-    assert again[0].label == "coke" and len(sent) == 2  # remembered, not sent again
+    results = await clf.classify_scan([behind, near, beside, lonely], frame, frame, workspace)
+    assert [r.label for r in results] == ["coke"] * 4 and not any(r.meta.get("defer") for r in results)
+    two_views = [c for c in calls if isinstance(c[0], list)]
+    one_view = [c for c in calls if not isinstance(c[0], list)]
+    assert len(two_views) == 2 and len(one_view) == 2  # near + beside: both views; behind + lonely: survey only
+    assert all(len(imgs) == 2 and names == [VIEW_NAMES["survey"], VIEW_NAMES["scan"]] for imgs, names in two_views)
+    b = yolo[0]
+    assert clf.last_views[1].box == (b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)  # snapped to YOLO's box
+
+    again = await clf.classify_scan([seen_in_survey(352, 1, (100, 100, 90, 130))], frame, frame, workspace)
+    assert again[0].label == "coke" and len(calls) == 4  # the same can, unmoved: remembered, not sent again
 
 
 def test_label_mode_reads_from_the_scan_pose_unless_cam_pos():

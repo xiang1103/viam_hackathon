@@ -145,3 +145,13 @@ def test_arch_is_grasped_across_a_solid_leg_not_through_the_hollow(workspace):
     o = segment(carve(frame, 388, 412, -15, 3, 30), workspace)[0]
     assert abs(o.grasp_xy[0] - 400) > 14  # moved off the hollow onto a leg...
     assert o.grasp_width == pytest.approx(30, abs=3)  # ...where the block is solid across its full width
+
+
+def test_choose_next_leaves_an_item_whose_grasp_target_is_out_of_bounds(workspace):
+    """A can at the table's edge, pushed past the y bound by the calibration correction, is left
+    alone - the next item is chosen instead of the run stopping with UnsafeTarget."""
+    objects = segment(make_frame(SCENE), workspace)
+    first = choose_next(objects, workspace)
+    ws = {**workspace, "gripper": {**workspace["gripper"], "xy_offset": [0.0, 0.0]},
+          "bounds": {**workspace["bounds"], "y": [first.centroid[1] + 5, workspace["bounds"]["y"][1]]}}
+    assert choose_next(objects, ws) is not first

@@ -51,6 +51,8 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 - Orders: `python -m recycle_sorter.cli --mode label --want coke=2 sparkling_water` (or `--order "2 cokes and a sparkling water"`, parsed by `llm/parse_order.py`) picks ONLY the requested classes - surest reads first, one pile per class - and logs what is missing. It is `run_sort(..., wanted={class: n})`: the arm half that `pipeline.py` does not have. Works with any mode (`--mode color --want red=2` needs no Ollama).
 - `--mode label` (free, the team's direction): `classify/label_vlm.py` hands each YOLO crop to `llm/classify_image.py` (Xiang's local Ollama vision model + `reference_pics/`); piles = the categories in `llm/categories.py`. Needs Ollama reachable (`OLLAMA_URL`). `--mode brand` (Claude API) is kept but unused - the team does not want paid APIs.
 - Camera calibration lives in config: `machine.yaml` `depth_scale` (this RealSense reads ~6 % long) and `workspace.yaml` `gripper.xy_offset`, both measured on the arm on 2026-09-18. To re-measure x/y: run `scripts/02_hover_test.py`, and while it hovers take a read-only snapshot - the camera looks straight down at the lid.
+- `choose_next` (`perception/select.py`) leaves an item where it is, with a warning, when its grasp target is outside `bounds`. The target is the item's position plus `gripper.xy_offset`, for example a can at the table's -y edge. The next item is picked instead of `UnsafeTarget` stopping the run.
+  `bounds.named_*_min` loosen the limits only for taught poses (`survey`, `scan`), never for picks.
 - z values in the package mean **fingertip** height. `Manipulator.move_to` adds `tcp_offset` to get the gripper-frame pose for `motion.move`.
 - Safe to run (no motion): `.venv/bin/python -m pytest -q`, and `python -m recycle_sorter.cli --replay <frames dir>`.
 - These **move the arm**: `python -m recycle_sorter.cli` (without `--dry-run` / `--replay`), `scripts/02_hover_test.py`. Use `--step` on first runs.
@@ -80,9 +82,10 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
   - Two pictures per look in `--mode label` (`sort.yaml` → `view: scan`):
     - **Positions**, and so every grasp, come from `survey`, the original `cans_view` pose. `depth_scale` and `gripper.xy_offset` were measured there.
       Planning grasps from the lower pose made every grab miss on 2026-09-18.
-    - **Labels** come from `scan`, the lower `cam_lower_pos` pose, where each can has more pixels.
-      Each can's 3D box from the survey is projected into the scan picture to cut its crop (`perception/scan.py`, `LocalLabelClassifier.classify_scan`).
-      A can hidden behind a nearer one there is deferred to a later look, and a can that hasn't moved keeps its last read.
+    - **Labels** come from both pictures. Each can is sent to the VLM as two crops in one request: its YOLO box in the survey picture (from above) and its box in the `scan` picture (the lower `cam_lower_pos` pose, closer and from the side). `LocalLabelClassifier.classify_scan` does this, and `llm/classify_image.py` accepts a list of views with `view_names`.
+      The scan-picture box is the YOLO box there nearest the can's projected 3D box (`perception/scan.py`). The projection alone lands tens of pixels off and caught two cans per crop on 2026-09-18.
+      A can with no YOLO box near its projection, or hidden behind a nearer can, is sent with its survey crop alone. Nothing is deferred. A can that hasn't moved keeps its last read.
+      `num_ctx` always leaves room for two views (`MAX_VIEWS`). Ollama reloads the model, about 50 s, whenever `num_ctx` changes, so mixing one-view and two-view requests must not change it.
     - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
     The joint angles are in `config/joint_positions.json`, but the code always moves to the stored gripper poses through the planner, never to raw joint angles.
   - The same arm path without the prompt: `python -m recycle_sorter.cli --mode label --order "..."` or `--want coke=2`.

@@ -40,6 +40,10 @@ IMAGE_TYPES = {".jpg", ".jpeg", ".png"}
 # Ollama's default context (4096 tokens) is too small once reference photos are sent.
 # Each image costs ~1000 tokens with this model; the text ~1500.
 TOKENS_PER_IMAGE, TOKENS_TEXT = 1200, 2048
+# Room for this many views of the item in every request, used or not: Ollama reloads the model (and
+# re-reads every reference photo, ~50 s) whenever num_ctx changes, so it must not vary between a
+# one-view and a two-view request.
+MAX_VIEWS = 2
 
 # Names the VLM answers with. "coke" and "coconut_water" share a first token, and
 # the 3B model under a strict schema often picks the wrong one of the pair, so
@@ -134,16 +138,25 @@ def _schema(references: list[Reference]) -> dict:
     return {"type": "object", "properties": properties, "required": list(properties)}
 
 
-def _messages(image_b64: str, references: list[Reference]) -> list[dict]:
-    """System prompt, then one message per reference photo, then the crop. The prefix is
-    identical on every call, so Ollama can reuse it and only process the new crop."""
+def _messages(images_b64: list[str], references: list[Reference],
+              view_names: list[str] | None = None) -> list[dict]:
+    """System prompt, then one message per reference photo, then the crop(s). The prefix is
+    identical on every call, so Ollama can reuse it and only process the new crops."""
     system = SYSTEM_PROMPT + ("\n\n" + REFERENCE_INSTRUCTIONS if references else "")
     messages = [{"role": "system", "content": system}]
     for r in references:
         messages.append({"role": "user", "images": [r.image_b64],
                          "content": f"Reference '{r.name}': category {_TO_VLM.get(r.label, r.label)}."})
-    messages.append({"role": "user", "images": [image_b64],
-                     "content": "Now the photo to classify. What drink is this?"})
+    if len(images_b64) == 1:
+        question = "Now the photo to classify. What drink is this?"
+    else:
+        names = view_names or [f"view {i + 1}" for i in range(len(images_b64))]
+        listing = "; ".join(f"photo {i + 1}: {n}" for i, n in enumerate(names))
+        question = (f"Now {len(images_b64)} photos of the SAME single drink, taken from different "
+                    f"angles ({listing}). Combine them: use whichever shows its label best, and if "
+                    "they seem to disagree, trust the one where you can actually read the brand. "
+                    "What drink is this?")
+    messages.append({"role": "user", "images": images_b64, "content": question})
     return messages
 
 
@@ -155,17 +168,21 @@ class Classification:
     closest_reference: str = ""  # reference photo the model found most similar, or "none"
 
 
-def classify_image(image: bytes | str | Path) -> Classification:
-    """Classify one crop, given as JPEG/PNG bytes or a file path."""
-    data = image if isinstance(image, bytes) else Path(image).read_bytes()
+def classify_image(image: bytes | str | Path | list[bytes | str | Path],
+                   view_names: list[str] | None = None) -> Classification:
+    """Classify one drink from one crop, or from several crops of the SAME drink taken from
+    different angles (e.g. [top view, side view], named in `view_names`). Each crop is JPEG/PNG
+    bytes or a file path."""
+    images = image if isinstance(image, list) else [image]
+    data = [i if isinstance(i, bytes) else Path(i).read_bytes() for i in images]
     references = load_references()
     body = {
         "model": MODEL,
-        "messages": _messages(base64.b64encode(data).decode(), references),
+        "messages": _messages([base64.b64encode(d).decode() for d in data], references, view_names),
         "format": _schema(references),
         "stream": False,
         "options": {"temperature": 0,
-                    "num_ctx": TOKENS_TEXT + TOKENS_PER_IMAGE * (len(references) + 1)},
+                    "num_ctx": TOKENS_TEXT + TOKENS_PER_IMAGE * (len(references) + max(MAX_VIEWS, len(data)))},
     }
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",

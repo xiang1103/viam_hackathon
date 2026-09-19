@@ -20,6 +20,8 @@ class SimRobot:
         self.cfg = {"perception": "depth"}
         workspace = load_yaml("workspace.yaml")
         workspace["table_top"] = TABLE_TOP
+        # The simulated camera is exact: the real arm's camera-to-arm correction would only make it miss.
+        workspace["gripper"]["xy_offset"] = [0.0, 0.0]
         machine = {"move_frame": "gripper", "rpc_timeout_s": 5, "arm_speed": 25}
         self.manip = Manipulator(self, self, self, machine, workspace, load_yaml("poses.yaml"))
 

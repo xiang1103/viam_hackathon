@@ -16,7 +16,15 @@ def choose_next(
     blacklist: list[np.ndarray] | None = None,
     blacklist_radius: float = 40.0,
 ) -> ObjectObservation | None:
-    """Pick the easiest object: graspable, topmost, and with the most room around it."""
+    """Pick the easiest object: graspable, topmost, and with the most room around it.
+
+    Items the arm must not go to are left where they are, with a warning: further than max_reach
+    from its base, or with a grasp target (the item's position plus the calibration correction
+    gripper.xy_offset) outside the workspace bounds - e.g. a can at the table's edge.
+    """
+    from ..manipulation.pickplace import grasp_pose
+    from ..manipulation.safety import UnsafeTarget, check_target
+
     max_open = workspace["gripper"]["max_open"]
     reach = workspace["sorted_layout"]["max_reach"]
     out_of_reach = [o for o in objects if np.hypot(*(o.grasp_xy if o.grasp_xy is not None else o.centroid)) > reach]
@@ -25,11 +33,21 @@ def choose_next(
             "%d item(s) are further than %d mm from the arm base and will be left: %s",
             len(out_of_reach), reach, ", ".join(f"({o.centroid[0]:.0f}, {o.centroid[1]:.0f})" for o in out_of_reach),
         )
+    out_of_bounds = []
+    for o in objects:
+        x, y, z, _ = grasp_pose(o, workspace)
+        try:
+            check_target(x, y, z + workspace["pick"]["approach"], workspace)
+        except UnsafeTarget as e:
+            out_of_bounds.append(o)
+            log.warning("item at (%.0f, %.0f) is left: its grasp target is outside the bounds (%s)",
+                        o.centroid[0], o.centroid[1], e)
     candidates = [
         o
         for o in objects
         if (o.grasp_width or o.width) < max_open - 5
         and not any(o is far for far in out_of_reach)
+        and not any(o is out for out in out_of_bounds)
         and not any(np.linalg.norm(o.centroid - b) < blacklist_radius for b in (blacklist or []))
     ]
     if not candidates:
