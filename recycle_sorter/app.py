@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from pathlib import Path
@@ -97,21 +98,35 @@ def crowded(target: ObjectObservation, others: list[ObjectObservation], clearanc
     )
 
 
-def save_scan_debug(scan: Frame, seen, results, name: str) -> Path:
-    """The eye-level picture with each item's crop box and what it was read as."""
+def save_scan_debug(scan: Frame, seen, results, name: str, scan_only=(), links=None) -> Path:
+    """The eye-level picture with each item's crop box and what it was read as.
+
+    Items are numbered as in the survey picture (#i there is #i here). Cans YOLO found only in
+    this picture are orange and numbered scan-N. With `links`, which box in each picture every
+    read came from is written next to it as <name>-links.json."""
     img = scan.color.copy()
-    for v, r in zip(seen, results):
+
+    def mark(box, text, color):
+        x, y, w, h = box
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(img, text, (x, max(y - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+    for i, (v, r) in enumerate(zip(seen, results)):
         if v.box is None:
             continue
-        x, y, w, h = v.box
-        color = (0, 200, 0) if v.readable else (0, 0, 255)
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        text = f"{r.label} {r.confidence:.2f}" if v.readable else f"hidden {v.hidden:.0%}"
-        cv2.putText(img, text, (x, max(y - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+        if v.readable:
+            mark(v.box, f"#{i} {r.label} {r.confidence:.2f}", (0, 200, 0))
+        else:
+            mark(v.box, f"#{i} hidden {v.hidden:.0%}", (0, 0, 255))
+    for r in scan_only:
+        link = r.meta["link"]
+        mark(link["scan_box"], f"{link['can']} {r.label} {r.confidence:.2f}", (0, 140, 255))
     out = DATA_DIR / "debug"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}.png"
     cv2.imwrite(str(path), img)
+    if links is not None:
+        (out / f"{name}-links.json").write_text(json.dumps(links, indent=2))
     return path
 
 
@@ -187,7 +202,16 @@ async def run_sort(
             scan.timestamp = f"{frame.timestamp}-scan"
             save_frame(scan)
             results = await classifier.classify_scan(objects, scan, frame, workspace)
-            log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp))
+            scan_only = getattr(classifier, "last_scan_only", [])
+            links = getattr(classifier, "last_links", None)
+            log.info("scan: %s", save_scan_debug(scan, classifier.last_views, results, scan.timestamp, scan_only, links))
+            for link in links or []:
+                log.info("  can %-7s survey box %-22s scan box %-22s views %-15s -> %s %.2f",
+                         link["can"], link["survey_box"], link["scan_box"], "+".join(link["views"]) or "none",
+                         link["label"], link["confidence"])
+            if scan_only:
+                log.info("%d can(s) seen only in the scan picture: read, but no position to pick them from this look",
+                         len(scan_only))
         elif hasattr(classifier, "classify_batch"):
             results = await classifier.classify_batch(objects, frame)  # all items in one request
         elif getattr(classifier, "remember", False):

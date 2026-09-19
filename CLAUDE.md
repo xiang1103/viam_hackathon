@@ -83,8 +83,10 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
     - **Positions**, and so every grasp, come from `survey`, the original `cans_view` pose. `depth_scale` and `gripper.xy_offset` were measured there.
       Planning grasps from the lower pose made every grab miss on 2026-09-18.
     - **Labels** come from both pictures. Each can is sent to the VLM as two crops in one request: its YOLO box in the survey picture (from above) and its box in the `scan` picture (the lower `cam_lower_pos` pose, closer and from the side). `LocalLabelClassifier.classify_scan` does this, and `llm/classify_image.py` accepts a list of views with `view_names`.
-      The scan-picture box is the YOLO box there nearest the can's projected 3D box (`perception/scan.py`). The projection alone lands tens of pixels off and caught two cans per crop on 2026-09-18.
-      A can with no YOLO box near its projection, or hidden behind a nearer can, is sent with its survey crop alone. Nothing is deferred. A can that hasn't moved keeps its last read.
+      The scan-picture box is the YOLO box there nearest the can's projected 3D box (`perception/scan.py`), linked one-to-one (`LocalLabelClassifier._link`). The projection alone lands tens of pixels off and caught two cans per crop on 2026-09-18.
+      Every YOLO box in either picture is sent to the VLM. A can hidden behind a nearer one still gets its own scan box if YOLO found one, and visible cans pick their boxes first, so a can hidden behind another can't take the front can's box.
+      A survey can with no scan box is sent with its survey crop alone. A scan box that no survey can links to is sent alone, as `scan-N`. It has no position, so it is logged and drawn but never picked (`last_scan_only`). Nothing is deferred. A can that hasn't moved keeps its last read.
+      Links: each read's `meta["link"]` holds `can`, `survey_box`, `scan_box`, `scan_yolo_index`, and `views`. `#i` in the survey picture is `#i` in the scan picture. The links are written to `data/debug/<ts>-scan-links.json`, logged per can, and copied into the order JSON as `links`.
       `num_ctx` always leaves room for two views (`MAX_VIEWS`). Ollama reloads the model, about 50 s, whenever `num_ctx` changes, so mixing one-view and two-view requests must not change it.
     - `--cam-pos` (mode `label_cam_pos`) reads labels from the survey picture too: one picture per look. `recycle_sorter.cli` has the same flag.
     The joint angles are in `config/joint_positions.json`, but the code always moves to the stored gripper poses through the planner, never to raw joint angles.
@@ -93,6 +95,11 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
   - The text half only: `python -m llm.parse_order`.
 - Needs `ollama serve` running, with `qwen2.5:1.5b` and `qwen2.5vl:7b` pulled.
   - Override the models with the `ORDER_MODEL` and `VISION_MODEL` environment variables.
+  - Every request sends `keep_alive: -1`, so both models stay loaded until Ollama stops. Ollama's default unloads them after 5 minutes. Override with `OLLAMA_KEEP_ALIVE_MODELS`, a number or a duration like `"30m"`.
+  - Loading the vision model and having it read the reference photos takes about 55 s once per Ollama start.
+    - `python -m llm.warmup &` does this in the background right after `ollama serve`.
+    - `pipeline.py` also starts `warm_up()` in the background on launch, overlapping with connecting to the robot.
+    - After that, a crop takes about 12 s even on the first order. Measured 2026-09-19, with both models loaded together (7.2 GB).
   - The 7B model needs about 7 GB of memory.
 - **Categories are shared.** They live only in `llm/categories.py`, and both models read them from there:
   - `CATEGORIES`: each category has an `order` description (for the parser) and a `visual` description (for the VLM).

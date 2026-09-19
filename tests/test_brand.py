@@ -307,7 +307,47 @@ async def test_local_label_reader_sends_the_top_and_the_closer_view_together(wor
     assert clf.last_views[1].box == (b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)  # snapped to YOLO's box
 
     again = await clf.classify_scan([seen_in_survey(352, 1, (100, 100, 90, 130))], frame, frame, workspace)
-    assert again[0].label == "coke" and len(calls) == 4  # the same can, unmoved: remembered, not sent again
+    # The same can, unmoved: remembered, not sent again. `beside` is not in this look's survey
+    # items but YOLO still boxes it in the scan picture, so that box is read on its own.
+    assert again[0].label == "coke" and again[0].meta["remembered"] and len(calls) == 5
+    assert calls[-1][1] is None and [r.meta["link"]["scan_yolo_index"] for r in clf.last_scan_only] == [1]
+
+
+async def test_every_box_in_either_picture_is_read_and_linked(workspace):
+    """A can hidden behind another still gets both views when YOLO boxed it in the scan picture,
+    without taking the front can's box; a box found only in the scan picture is read on its own,
+    kept apart from the pickable items; every read records which boxes it came from."""
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+    from recycle_sorter.perception.scan import views
+    from recycle_sorter.perception.yolo import Box
+
+    calls = []
+
+    def read(images, view_names=None):
+        calls.append(images)
+        return SimpleNamespace(label="coke", confidence="high", visible_text="", closest_reference="coke")
+
+    behind, near = seen_in_survey(520, 0, (300, 100, 90, 130)), seen_in_survey(350, 0, (100, 100, 90, 130))
+    for o in (behind, near):
+        o.crop = np.full((130, 90, 3), 120, np.uint8)
+    frame = survey_frame()
+    projected = views([behind, near], frame, frame, workspace)
+    assert projected[0].hidden > workspace["scan"]["max_hidden"]  # the back can is mostly covered
+    (fx, fy, fw, fh), (bx, by, bw, bh) = projected[1].box, projected[0].box
+    only_in_scan = Box(1100, 50, 1180, 200, "can", 0.7)
+    yolo = [only_in_scan, Box(bx, by, bx + bw, by + bh // 2, "can", 0.6), Box(fx, fy, fx + fw, fy + fh, "can", 0.9)]
+    clf = LocalLabelClassifier({"view": "scan"}, read=read, detect=lambda image: yolo)
+
+    results = await clf.classify_scan([behind, near], frame, frame, workspace)
+
+    assert len(results) == 2 and len(calls) == 3  # both survey cans + the scan-only can
+    assert [r.meta["link"]["scan_yolo_index"] for r in results] == [1, 2]  # each can keeps its own box
+    assert [r.meta["link"]["views"] for r in results] == [["survey", "scan"], ["survey", "scan"]]
+    assert [r.meta["link"]["survey_box"] for r in results] == [[300, 100, 90, 130], [100, 100, 90, 130]]
+    (extra,) = clf.last_scan_only
+    assert extra.meta["link"] == {"can": "scan-0", "survey_box": None, "scan_box": [1100, 50, 80, 150],
+                                  "scan_yolo_index": 0, "views": ["scan"]}
+    assert [link["can"] for link in clf.last_links] == [0, 1, "scan-0"]
 
 
 def test_label_mode_reads_from_the_scan_pose_unless_cam_pos():

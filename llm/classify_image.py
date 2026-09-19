@@ -32,6 +32,10 @@ from llm.categories import CATEGORIES, LABELS, NOT_SUPPORTED, label_from_text
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = os.environ.get("VISION_MODEL", "qwen2.5vl:7b")
+# How long Ollama keeps the model loaded after a request. Its default (5 min) means every new
+# session reloads the 7B model and re-reads the reference photos (~50 s); -1 = until Ollama stops.
+_keep = os.environ.get("OLLAMA_KEEP_ALIVE_MODELS", "-1")
+KEEP_ALIVE = int(_keep) if _keep.lstrip("-").isdigit() else _keep  # a number, or a duration like "30m"
 CONFIDENCE = ["high", "medium", "low"]
 REFERENCE_DIR = Path(os.environ.get(
     "REFERENCE_DIR", Path(__file__).resolve().parent.parent / "reference_pics"))
@@ -168,19 +172,15 @@ class Classification:
     closest_reference: str = ""  # reference photo the model found most similar, or "none"
 
 
-def classify_image(image: bytes | str | Path | list[bytes | str | Path],
-                   view_names: list[str] | None = None) -> Classification:
-    """Classify one drink from one crop, or from several crops of the SAME drink taken from
-    different angles (e.g. [top view, side view], named in `view_names`). Each crop is JPEG/PNG
-    bytes or a file path."""
-    images = image if isinstance(image, list) else [image]
-    data = [i if isinstance(i, bytes) else Path(i).read_bytes() for i in images]
+def _ask(data: list[bytes], view_names: list[str] | None = None) -> dict:
+    """One request to the VLM: system prompt + reference photos + these crops. Returns its JSON."""
     references = load_references()
     body = {
         "model": MODEL,
         "messages": _messages([base64.b64encode(d).decode() for d in data], references, view_names),
         "format": _schema(references),
         "stream": False,
+        "keep_alive": KEEP_ALIVE,
         "options": {"temperature": 0,
                     "num_ctx": TOKENS_TEXT + TOKENS_PER_IMAGE * (len(references) + max(MAX_VIEWS, len(data)))},
     }
@@ -199,7 +199,30 @@ def classify_image(image: bytes | str | Path | list[bytes | str | Path],
             f"Can't reach Ollama at {OLLAMA_URL} ({e}). Start it with `ollama serve` "
             f"and make sure the model is pulled: `ollama pull {MODEL}`."
         ) from e
-    out = json.loads(reply["message"]["content"])
+    return json.loads(reply["message"]["content"])
+
+
+def warm_up() -> float:
+    """Load the model and have it read the system prompt and every reference photo now, so the
+    first real crop is fast (~10 s instead of ~50 s). Later requests start with the same prompt
+    and photos, which Ollama keeps. Returns the seconds it took."""
+    import cv2
+    import numpy as np
+
+    start = time.perf_counter()
+    blank = cv2.imencode(".jpg", np.full((64, 64, 3), 200, np.uint8))[1].tobytes()
+    _ask([blank])
+    return time.perf_counter() - start
+
+
+def classify_image(image: bytes | str | Path | list[bytes | str | Path],
+                   view_names: list[str] | None = None) -> Classification:
+    """Classify one drink from one crop, or from several crops of the SAME drink taken from
+    different angles (e.g. [top view, side view], named in `view_names`). Each crop is JPEG/PNG
+    bytes or a file path."""
+    images = image if isinstance(image, list) else [image]
+    data = [i if isinstance(i, bytes) else Path(i).read_bytes() for i in images]
+    out = _ask(data, view_names)
     text = out.get("visible_text", "")
     label = _FROM_VLM.get(out.get("label"), out.get("label"))
     confidence = out.get("confidence") if out.get("confidence") in CONFIDENCE else "low"

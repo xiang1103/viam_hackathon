@@ -21,6 +21,8 @@ from llm.categories import CATEGORIES, NOT_SUPPORTED, label_from_text
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = os.environ.get("ORDER_MODEL", "qwen2.5:1.5b")
+_keep = os.environ.get("OLLAMA_KEEP_ALIVE_MODELS", "-1")  # -1 = keep loaded until Ollama stops
+KEEP_ALIVE = int(_keep) if _keep.lstrip("-").isdigit() else _keep  # a number, or a duration like "30m"
 
 MAX_QUANTITY = 20
 
@@ -84,6 +86,7 @@ def _chat(text: str, labels: dict[str, dict[str, str]]) -> dict:
         ],
         "format": _schema(list(labels)),
         "stream": False,
+        "keep_alive": KEEP_ALIVE,
         "options": {"temperature": 0},
     }
     req = urllib.request.Request(
@@ -94,6 +97,8 @@ def _chat(text: str, labels: dict[str, dict[str, str]]) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             reply = json.load(resp)
+    except urllib.error.HTTPError as e:  # Ollama answered, but refused the request
+        raise RuntimeError(f"Ollama error {e.code}: {e.read().decode(errors='replace')}") from e
     except urllib.error.URLError as e:
         raise RuntimeError(
             f"Can't reach Ollama at {OLLAMA_URL} ({e}). Start it with `ollama serve` "

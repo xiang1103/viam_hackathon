@@ -44,6 +44,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # OLLAMA_URL / models, before the llm modules read the environment
 
+from llm.classify_image import warm_up  # noqa: E402
 from llm.parse_order import parse_order  # noqa: E402
 from recycle_sorter.app import run_sort  # noqa: E402
 from recycle_sorter.config import DATA_DIR  # noqa: E402
@@ -67,7 +68,8 @@ def _log_to_console() -> None:
 
 def _keep_last_picture(record: dict, since: float) -> None:
     """Copy the last annotated survey picture of this order to data/scans/<time>.png, and the
-    last label (scan) picture, with each can's crop box, to data/scans/<time>-scan.png."""
+    last label (scan) picture, with each can's crop box, to data/scans/<time>-scan.png.
+    The links of that scan picture (which boxes each read came from) go into the record."""
     looks = [p for p in (DATA_DIR / "debug").glob("*.png")
              if _LOOK_PICTURE.fullmatch(p.name) and p.stat().st_mtime >= since]
     for suffix, key in (("", "picture"), ("-scan", "scan_picture")):
@@ -78,6 +80,10 @@ def _keep_last_picture(record: dict, since: float) -> None:
             shutil.copyfile(max(kind, key=lambda p: p.stat().st_mtime), out)
             record[key] = str(out)
             print(f"{key.replace('_', ' ')}:", out)
+    # Which survey box and scan box each can's read came from, for the last scan picture.
+    links = [p for p in (DATA_DIR / "debug").glob("*-scan-links.json") if p.stat().st_mtime >= since]
+    if links:
+        record["links"] = json.loads(max(links, key=lambda p: p.stat().st_mtime).read_text())
 
 
 def _save(record: dict) -> None:
@@ -134,6 +140,14 @@ async def main() -> None:
 
     if args.cam_pos and args.mode == "label":
         args.mode = "label_cam_pos"
+
+    # Load the vision model and have it read the reference photos (~50 s when cold) while the
+    # robot connects, the order is typed and the arm goes to survey - not when the first can is read.
+    # Ollama queues requests, so a crop sent before this finishes simply waits for it.
+    warming = asyncio.create_task(asyncio.to_thread(warm_up))
+    warming.add_done_callback(lambda t: print(
+        f"vision model warm-up failed: {t.exception()}" if t.exception() else f"vision model ready ({t.result():.0f} s)"))
+
     robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
     try:
         if args.command:
