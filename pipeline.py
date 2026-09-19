@@ -7,22 +7,26 @@
     fetched: {"coke": 2, "water": 1}
 
 Per command:
-  1. llm/parse_order.py   text -> {category: count} (qwen2.5:1.5b)
-  2. recycle_sorter       run_sort(..., mode="label", wanted=order): survey picture -> YOLO boxes ->
-                          llm/classify_image.py labels each crop (qwen2.5vl:7b + reference_pics/) ->
-                          picks the surest match of each ordered category, one pile per category.
-                          Positions come from the `survey` pose (where the grasp was calibrated);
-                          labels from a closer picture at the `scan` pose (cam_lower_pos)
-  3. result               fetched and missing counts printed. The latest look's two annotated
-                          YOLO pictures are kept in data/scans/<launch time>/ as survey.png and
-                          scan.png (overwritten each look). Nothing else is saved.
+  1. llm/parse_order.py   text -> {category: count} as JSON (qwen2.5:1.5b). What is not a category we
+                          stock is listed as not available and skipped.
+  2. recycle_sorter       run_sort(..., mode="label", wanted=order):
+                          a. `scan` pose (cam_lower_pos): a close picture from the side, where the labels
+                             can be read. YOLO boxes each can; llm/classify_image.py labels each crop
+                             (qwen2.5vl:7b + reference_pics/).
+                          b. `survey` pose (top view): where each can IS. YOLO's outline of the can gives
+                             the grasp point; each can is linked to its box in the scan picture. The
+                             survey is taken last, so the arm goes from it straight to the pick.
+                          c. picks the surest match of each ordered category, one pile per category.
+                             A category nobody read off a can is skipped and reported as missing.
+  3. result               printed, and written to data/scans/<launch time>/ together with the latest
+                          look's two annotated YOLO pictures: scan.png (labels), survey.png
+                          (positions), order.json (the order, what was fetched, what was missing).
 
 Usage:
     python pipeline.py                     # type commands; THE ARM MOVES
     python pipeline.py --step              # press Enter before every arm motion (first runs)
     python pipeline.py --dry-run           # plan and log every move, move nothing
     python pipeline.py "2 cokes"           # one command, then exit
-    python pipeline.py --cam-pos           # labels from the survey picture too: no closer `scan` picture
 
 Needs `ollama serve` with qwen2.5:1.5b and qwen2.5vl:7b, and the robot (.env).
 Image-only check with no arm: python scan_drinks.py --camera
@@ -38,6 +42,7 @@ import sys
 import threading
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -80,6 +85,24 @@ async def handle(command: str, get_robot, args) -> None:
     missing = Counter(order.items) - Counter(fetched)
     print(("planned: " if args.dry_run else "fetched: ") + json.dumps(dict(fetched))
           + (f"  missing: {json.dumps(dict(missing))}" if missing else ""))
+    save_result(args.pictures, command, order, fetched, missing, args.dry_run)
+
+
+def save_result(folder: Path, command: str, order, fetched, missing, dry_run: bool) -> Path:
+    """The command's outcome as JSON, next to the pictures it was decided from (one entry per command)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "order.json"
+    history = json.loads(path.read_text()) if path.exists() else []
+    history.append({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "command": command,
+        "order": dict(order.items),
+        "not_available": list(order.not_supported),
+        "planned" if dry_run else "fetched": dict(fetched),
+        "missing": dict(missing),
+    })
+    path.write_text(json.dumps(history, indent=2))
+    return path
 
 
 async def main() -> None:
@@ -99,6 +122,8 @@ async def main() -> None:
 
     if args.cam_pos and args.mode == "label":
         args.mode = "label_cam_pos"
+        print("WARNING --cam-pos: the survey is a top view now (poses.yaml) - it shows lids, not labels, so labels "
+              "read from it are guesses. Leave --cam-pos off to read them from the `scan` pose.")
     # One folder per launch, holding only the latest look's two YOLO pictures (survey.png, scan.png).
     args.pictures = SCANS_DIR / datetime.now().strftime("%Y%m%d-%H%M%S")
     print("pictures:", args.pictures)
