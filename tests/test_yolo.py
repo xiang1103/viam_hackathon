@@ -45,6 +45,17 @@ def test_a_box_with_nothing_standing_in_it_is_dropped(workspace):
     assert observations_from_boxes([bare_table], make_frame(CANS), workspace) == []
 
 
+def test_every_dropped_box_is_reported_with_why(workspace):
+    """The survey picture draws these: a box YOLO found that did not become an item, and the reason."""
+    bare_table = Box(50, 50, 120, 120, "bottle", 0.9)
+    workspace["unsorted_zone"] = {"x": [200, 400], "y": [-150, 150]}  # the can at x=450 is now outside
+    rejected = []
+    objects = observations_from_boxes([bare_table] + [box_around(c) for c in CANS], make_frame(CANS), workspace, rejected)
+    assert len(objects) == 1 and round(objects[0].centroid[0]) == 330
+    assert [(b is bare_table, why) for b, why in rejected] == [
+        (True, "nothing above the table"), (False, "outside the unsorted zone")]
+
+
 def test_a_neighbour_poking_into_the_box_does_not_move_the_object(workspace):
     wide = box_around(CANS[0], pad=6)
     wide.x1 += 40  # reaches toward, and clips the corner region of, whatever is next to it

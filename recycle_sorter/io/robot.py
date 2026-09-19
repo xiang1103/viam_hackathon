@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Any
@@ -39,6 +40,9 @@ async def connect() -> RobotClient:
     # process dies: sessions stay enabled.
     opts.check_connection_interval = 0
     opts.attempt_reconnect_interval = 0
+    # The SDK resets its own log level to this on every connect. VIAM_LOG_LEVEL=WARNING hides its INFO
+    # lines ("Connecting to socket ..."); pipeline.py sets it so they don't land in its prompt.
+    opts.log_level = getattr(logging, os.environ.get("VIAM_LOG_LEVEL", "INFO").upper(), logging.INFO)
     return await RobotClient.at_address(address, opts)
 
 
@@ -58,6 +62,7 @@ class LiveRobot:
         self._intrinsics: Intrinsics | None = None
         self._vision: dict[str, VisionClient] | None = None
         self._yolo: YoloDetector | None = None
+        self.last_rejected: list = []  # (YOLO box, reason) that the last detect() did not turn into an item
 
     # Resolved on first use, so arm-only actions work on a machine with no camera.
     @property
@@ -167,7 +172,8 @@ class LiveRobot:
         if how == "yolo":
             if self._yolo is None:
                 self._yolo = YoloDetector(self.cfg["yolo"])
-            return observations_from_boxes(self._yolo.detect(frame.color), frame, self.manip.workspace)
+            self.last_rejected = []  # YOLO boxes that did not become an item, with why: drawn in the survey picture
+            return observations_from_boxes(self._yolo.detect(frame.color), frame, self.manip.workspace, self.last_rejected)
         if how != "viam":
             return segment(frame, self.manip.workspace)
         vision = self.cfg["vision"]

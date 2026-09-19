@@ -22,8 +22,14 @@ yolo:
   # at 0.55-0.82. To use your own trained model instead: kind: yolo, weights: models/yours.pt.
   kind: yoloe
   weights: models/yoloe-11s-seg.pt   # downloaded on first use (28 MB + a 600 MB text encoder, once)
-  classes: [can, bottle]
-  confidence: 0.3
+  # "soda_can" instead of "can" (2026-09-19): on the same picture the Coke went 0.11 -> 0.59 and the Diet
+  # Coke 0.40 -> 0.78; with "can" YOLO missed cans below the cutoff. Of the words tried, soda_can scored
+  # highest on every can (then "soda can", "can of soda"; "drink-can", "beverage can" and "aluminum can"
+  # were no better than "can").
+  classes: [soda_can, bottle]
+  # 0.2 (was 0.3): a box only becomes a pickable item if depth shows something standing in it and it
+  # lies in the zone, so a false box costs nothing; a missed can is never picked.
+  confidence: 0.2
   imgsz: 1280
 
 vision:

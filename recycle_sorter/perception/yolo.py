@@ -10,7 +10,7 @@ import numpy as np
 
 from ..config import ROOT
 from ..types import Frame, ObjectObservation
-from .segment import finish, level, observe
+from .segment import finish, in_unsorted_zone, level, observe
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +118,9 @@ def _own_top(blob: np.ndarray, height: np.ndarray, top_band: float) -> np.ndarra
     return blob & ~(top & ~near_own)
 
 
-def observations_from_boxes(boxes: list[Box], frame: Frame, workspace: dict[str, Any]) -> list[ObjectObservation]:
+def observations_from_boxes(
+    boxes: list[Box], frame: Frame, workspace: dict[str, Any], rejected: list[tuple[Box, str]] | None = None
+) -> list[ObjectObservation]:
     """Turn 2D detections into the 3D objects the rest of the pipeline works with.
 
     YOLO says WHICH pixels are an item; the aligned depth image says where those pixels are
@@ -126,7 +128,10 @@ def observations_from_boxes(boxes: list[Box], frame: Frame, workspace: dict[str,
     one connected blob nearest the box's middle - so table, and a neighbour poking into the
     corner of the box, are left out. Size, top height and grasp then come from observe(),
     exactly as for depth-only detection.
+
+    `rejected`, when given, receives (box, reason) for every box that did not become an item.
     """
+    rejected = [] if rejected is None else rejected
     seg, table_top = workspace["segmentation"], workspace["table_top"]
     pts, valid, _ = level(frame, workspace)
     height = pts[..., 2] - table_top
@@ -141,18 +146,25 @@ def observations_from_boxes(boxes: list[Box], frame: Frame, workspace: dict[str,
         candidate = (standing & region).astype(np.uint8)
         n, labels, stats, centroids = cv2.connectedComponentsWithStats(candidate, connectivity=8)
         if n < 2:
-            continue  # nothing above the table inside this box: a false detection, or no depth there
+            rejected.append((b, "nothing above the table"))  # a false detection, or no depth there
+            continue
         middle = np.array([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2])
         big = [i for i in range(1, n) if stats[i][4] >= seg["min_area_px"]] or list(range(1, n))
         best = min(big, key=lambda i: np.linalg.norm(centroids[i] - middle))
         m = _own_top(labels == best, height, seg["top_band"])
         o = observe(pts[m], frame, workspace, mask=m, source_label=b.label)
         if o is None:
+            rejected.append((b, "too few depth points"))
             continue
         # The label is on the can's side, which the depth blob may only partly cover: keep
         # YOLO's whole box as the picture of the item.
         o.bbox = (b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)
         o.crop = frame.color[b.y0 : b.y1, b.x0 : b.x1].copy()
         o.detection_confidence = b.confidence
-        found.append(o)
-    return finish(found, workspace)
+        found.append((b, o))
+    kept = finish([o for _, o in found], workspace)
+    for b, o in found:
+        if o not in kept:
+            outside = not in_unsorted_zone(o, workspace)
+            rejected.append((b, "outside the unsorted zone" if outside else "too big for one item"))
+    return kept

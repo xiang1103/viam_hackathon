@@ -191,6 +191,9 @@ async def test_with_a_pictures_folder_only_the_two_yolo_pictures_are_kept(monkey
     counts = await app.run_sort(robot, "brand", pictures=tmp_path / "launch")
     assert dict(counts) == {"coca-cola": 2, "pepsi": 1, "sprite": 1}
     assert sorted(p.name for p in (tmp_path / "launch").iterdir()) == ["scan.png", "survey.png"]
+    import cv2
+
+    assert cv2.imread(str(tmp_path / "launch" / "survey.png")) is not None
     assert not (tmp_path / "debug").exists()  # app.DATA_DIR is tmp_path in tests
 
 
@@ -265,7 +268,7 @@ async def test_local_label_reader_maps_its_answers_to_piles():
 
     answers = iter([
         SimpleNamespace(label="diet_coke", confidence="high", visible_text="Diet Coke", closest_reference="diet_coke"),
-        SimpleNamespace(label="sparkling_water", confidence="low", visible_text="", closest_reference="none"),
+        SimpleNamespace(label="water", confidence="low", visible_text="", closest_reference="none"),
         SimpleNamespace(label="not_supported", confidence="high", visible_text="", closest_reference="none"),
     ])
     sent = []

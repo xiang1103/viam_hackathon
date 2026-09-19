@@ -24,22 +24,19 @@ CATEGORIES: dict[str, dict[str, str]] = {
                   "Coke Zero: BLACK can or label with red 'Coca-Cola' and 'Zero Sugar'." ,
     },
     "water": {
-        "order": "plain / still bottled water (also 'water', 'bottle of water', 'water bottle'; "
-                 "e.g. Dasani, Aquafina, Fiji, Evian, Smartwater, Poland Spring)",
-        "visual": "Still (non-carbonated) water: clear or light-blue plastic bottle of clear "
-                  "liquid with a narrow label, e.g. Dasani, Aquafina, Fiji (square bottle, "
-                  "pink hibiscus), Evian, Smartwater, Poland Spring. No 'sparkling' wording.",
-    },
-    "sparkling_water": {
-        "order": "sparkling / seltzer / carbonated water of any flavor "
-                 "(e.g. LaCroix, Bubly, Perrier, Topo Chico, 'lime sparkling water'). It may have different flavors like Lime, but all flavors are sparking water",
-        "visual": "Sparkling water / seltzer in any flavor. Usually a slim or standard can "
-                  "with bright pastel or neon graphics and a fruit name, e.g. Spindrift "
-                  "(SILVER can, lowercase black 'spindrift' wordmark, bottom half one soft "
-                  "fruit color: orange/red, blue, green, yellow), LaCroix "
-                  "(colorful splash pattern), Bubly (bold solid color, smiling 'bubly' logo), "
-                  "Spindrift, Waterloo, AHA, Polar; or a green glass Perrier bottle, "
-                  "Topo Chico, San Pellegrino. Words like 'sparkling', 'seltzer', 'carbonated'.",
+        "order": "any bottled or canned water, still OR sparkling, in any flavor (also 'water', "
+                 "'bottle of water', 'sparkling water', 'seltzer', 'lime sparkling water'; e.g. Dasani, "
+                 "Aquafina, Fiji, Evian, Smartwater, Poland Spring, LaCroix, Bubly, Spindrift, "
+                 "Perrier, Topo Chico)",
+        "visual": "Water, still or sparkling, in any flavor. Still: clear or light-blue plastic "
+                  "bottle of clear liquid with a narrow label, e.g. Dasani, Aquafina, Fiji (square "
+                  "bottle, pink hibiscus), Evian, Smartwater, Poland Spring. Sparkling / seltzer: "
+                  "usually a slim or standard can with bright pastel or neon graphics and a fruit "
+                  "name, e.g. Spindrift (SILVER can, lowercase black 'spindrift' wordmark, bottom "
+                  "half one soft fruit color: orange/red, blue, green, yellow), LaCroix (colorful "
+                  "splash pattern), Bubly (bold solid color, smiling 'bubly' logo), Waterloo, AHA, "
+                  "Polar; or a green glass Perrier bottle, Topo Chico, San Pellegrino. Words like "
+                  "'water', 'sparkling', 'seltzer', 'carbonated'.",
     },
     "energy_drink": {
         "order": "energy drinks (e.g. Red Bull, Monster, Celsius, Rockstar, Bang)",
@@ -64,7 +61,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
     },
     "non_listed_drinks": {
         "order": "any other soda / soft drink not listed above - not Coca-Cola, Diet Coke, "
-                 "ginger ale, water, sparkling water, energy drink or coconut water",
+                 "ginger ale, water (still or sparkling), energy drink or coconut water",
         "visual": "Any other soft drink not listed above (not a Coca-Cola product or ginger ale), "
                   "e.g. Pepsi (blue with red/white/blue globe), Sprite (green), Fanta (orange), "
                   "Dr Pepper (maroon), 7UP, Mountain Dew, A&W root beer, Mug, Schweppes tonic.",
@@ -89,12 +86,14 @@ def catalog(kind: str) -> str:
 BRAND_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     (NOT_SUPPORTED, ("juice", "lemonade", "milk", "coffee", "tea", "beer", "wine")),
     ("coconut_water", ("coconut", "vita coco", "zico")),
-    ("sparkling_water", ("sparkling", "seltzer", "carbonated", "fizzy", "soda water",
-                         "club soda", "lacroix", "la croix", "bubly", "perrier", "topo chico",
-                         "pellegrino", "spindrift", "waterloo", "polar")),
+    # Sparkling water is water. Its words come before the soda brands, so "soda water" and
+    # "club soda" are not caught by "soda".
+    ("water", ("sparkling", "seltzer", "carbonated", "fizzy", "soda water",
+               "club soda", "lacroix", "la croix", "bubly", "perrier", "topo chico",
+               "pellegrino", "spindrift", "waterloo", "polar")),
     # Before non_listed_drinks (so "Schweppes ginger ale" is ginger_ale) and before diet_coke
-    # (so "diet ginger ale" is not caught by "diet"). After sparkling_water, so
-    # "Canada Dry club soda" stays sparkling_water.
+    # (so "diet ginger ale" is not caught by "diet"). After the sparkling-water words, so
+    # "Canada Dry club soda" stays water.
     ("ginger_ale", ("canada dry", "ginger ale", "gingerale")),
     ("non_listed_drinks", ("pepsi", "sprite", "fanta", "dr pepper", "dr. pepper",
                            "7up", "7 up", "mountain dew", "a&w", "schweppes")),

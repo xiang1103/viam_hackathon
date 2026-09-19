@@ -18,7 +18,7 @@ from .io.recorder import load_frame, load_objects, save_frame
 from .io.robot import LiveRobot
 from .manipulation.pickplace import grasp_pose, pick, place
 from .manipulation.safety import UnsafeTarget
-from .perception.segment import draw, segment
+from .perception.segment import draw, segment, zone_outline_px
 from .perception.select import choose_next
 from .policy.piles import PileLayout
 from .policy.sort_policy import SortPolicy
@@ -99,6 +99,34 @@ def crowded(target: ObjectObservation, others: list[ObjectObservation], clearanc
     )
 
 
+def save_survey_picture(frame: Frame, objects, results, rejected, name: str, workspace: dict[str, Any],
+                        out_dir: Path) -> Path:
+    """The survey picture drawn like the scan picture: every YOLO box, with what it was read as.
+
+    Items are numbered #i, the same #i as in the scan picture. A YOLO box that did not become an
+    item (no depth, outside the unsorted zone, ...) is red with the reason: it was not read from
+    this picture and cannot be picked. The unsorted zone is outlined in magenta."""
+    img = frame.color.copy()
+    outline = zone_outline_px(frame, workspace)
+    if outline is not None:
+        cv2.polylines(img, [outline], isClosed=True, color=(255, 0, 255), thickness=2)
+
+    def mark(box, text, color):
+        x, y, w, h = box
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(img, text, (x, max(y - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+    for i, (o, r) in enumerate(zip(objects, results)):
+        if o.bbox[2]:
+            mark(o.bbox, f"#{i} {r.label} {r.confidence:.2f}", (0, 200, 0))
+    for b, why in rejected:
+        mark((b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0), f"dropped: {why}", (0, 0, 255))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}.png"
+    cv2.imwrite(str(path), img)
+    return path
+
+
 def save_scan_debug(scan: Frame, seen, results, name: str, scan_only=(), links=None,
                     out_dir: Path | None = None) -> Path:
     """The eye-level picture with each item's crop box and what it was read as.
@@ -156,7 +184,7 @@ async def run_sort(
                    confirm the zone is empty.
       every_pick   a new picture after every pick. Slowest, most careful.
 
-    `wanted` turns the run into an ORDER: {class: how many}, e.g. {"coke": 2, "sparkling_water": 1}.
+    `wanted` turns the run into an ORDER: {class: how many}, e.g. {"coke": 2, "water": 1}.
     Only those items are picked, the surest reads first, each class set down in its own pile;
     everything else stays where it is. What could not be found is logged as missing.
 
@@ -201,6 +229,8 @@ async def run_sort(
         if pictures is None:
             save_frame(frame, objects=objects if record_objects else None)
         if not objects:
+            if pictures is not None:  # still show what YOLO found and why none of it became an item
+                save_survey_picture(frame, [], [], getattr(robot, "last_rejected", []), "survey", workspace, pictures)
             return []
         if getattr(classifier, "needs_scan", False) and objects:
             # Second look, from eye level: WHERE things are came from above, WHAT they are is on
@@ -239,7 +269,8 @@ async def run_sort(
         if pictures is None:
             save_debug(frame, objects, results, frame.timestamp, workspace)
         else:
-            log.info("survey: %s", save_debug(frame, objects, results, "survey", workspace, out_dir=pictures))
+            rejected = getattr(robot, "last_rejected", [])
+            log.info("survey: %s", save_survey_picture(frame, objects, results, rejected, "survey", workspace, pictures))
         if not planned:
             readable = [(o, r) for o, r in zip(objects, results) if not r.meta.get("defer")]
             demand = assess([o for o, _ in readable], [r for _, r in readable], policy)

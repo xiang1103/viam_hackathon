@@ -21,7 +21,7 @@ async def main() -> None:
     ap.add_argument("--look", choices=["once", "when_needed", "every_pick"],
                     help="how often to take a new picture (default: pick.look in workspace.yaml)")
     ap.add_argument("--want", nargs="+", metavar="CLASS[=N]",
-                    help="fetch an order instead of sorting everything: e.g. --want coke=2 sparkling_water")
+                    help="fetch an order instead of sorting everything: e.g. --want coke=2 water")
     ap.add_argument("--order", metavar="TEXT",
                     help='the same, in words: --order "2 cokes and a sparkling water" (llm/parse_order.py, needs Ollama)')
     ap.add_argument("--cam-pos", action="store_true",

@@ -48,7 +48,7 @@ It assesses everything in the unsorted zone, creates one pile per class, then pi
 - Layout is dynamic (`unsorted_zone: auto`, `sorted_areas: auto` in `workspace.yaml`): `policy/zones.py` draws the zone around what the first look finds and generates sorted areas in the free table beyond it. Grasp points come from each item's real footprint (`perception/segment.py: choose_grasp`).
 - `--mode brand` (cans/bottles): `perception: yolo` (YOLOE open-vocabulary, `perception/yolo.py`, weights in git-ignored `models/`) draws each item's box; depth inside the box gives 3D; the crop is read by Claude (`classify/brand_claude.py`, needs `ANTHROPIC_API_KEY`) into the `categories` of `config/sort.yaml`. YOLO's own label ("bottle") is ignored. `detect_cans.py` is the standalone detector. Tests use fakes - never load the model or call the API from tests.
 - Frame: the package works in `machine.yaml` → `reference_frame: arm_origin` (the arm's base), not `world`. The machine's `world` was recalibrated on 2026-09-18 (arm at (-65, 35, 26), turned -90.8°); every number in `config/` was measured from the arm's base. The real walls go to the planner from `workspace.yaml` → `obstacles`. `move_arm.py` still sends its poses in `world`, so its fixed poses are no longer where they were - re-check before running it.
-- Orders: `python -m recycle_sorter.cli --mode label --want coke=2 sparkling_water` (or `--order "2 cokes and a sparkling water"`, parsed by `llm/parse_order.py`) picks ONLY the requested classes - surest reads first, one pile per class - and logs what is missing. It is `run_sort(..., wanted={class: n})`: the arm half that `pipeline.py` does not have. Works with any mode (`--mode color --want red=2` needs no Ollama).
+- Orders: `python -m recycle_sorter.cli --mode label --want coke=2 water` (or `--order "2 cokes and a sparkling water"`, parsed by `llm/parse_order.py`) picks ONLY the requested classes - surest reads first, one pile per class - and logs what is missing. It is `run_sort(..., wanted={class: n})`: the arm half that `pipeline.py` does not have. Works with any mode (`--mode color --want red=2` needs no Ollama).
 - `--mode label` (free, the team's direction): `classify/label_vlm.py` hands each YOLO crop to `llm/classify_image.py` (Xiang's local Ollama vision model + `reference_pics/`); piles = the categories in `llm/categories.py`. Needs Ollama reachable (`OLLAMA_URL`). `--mode brand` (Claude API) is kept but unused - the team does not want paid APIs.
 - Camera calibration lives in config: `machine.yaml` `depth_scale` (this RealSense reads ~6 % long) and `workspace.yaml` `gripper.xy_offset`, both measured on the arm on 2026-09-18. To re-measure x/y: run `scripts/02_hover_test.py`, and while it hovers take a read-only snapshot - the camera looks straight down at the lid.
 - `choose_next` (`perception/select.py`) leaves an item where it is, with a warning, when its grasp target is outside `bounds`. The target is the item's position plus `gripper.xy_offset`, for example a can at the table's -y edge. The next item is picked instead of `UnsafeTarget` stopping the run.
@@ -69,9 +69,14 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
   3. `run_sort(robot, "label", wanted=items)` does the rest: survey picture, YOLO boxes, the local VLM label for each crop (`classify/label_vlm.py` → `llm/classify_image.py`), then pick and place, surest reads first, one pile per category.
   4. `fetched` and `missing` are printed, or the error if the run failed. The prompt then returns for the next command.
   5. Files: only `data/scans/<launch time>/`, made once per launch, holding the latest look's two annotated YOLO pictures, `survey.png` and `scan.png`. Each look overwrites them.
+     Both are drawn the same way: each YOLO box with `#i label confidence`, and `#i` is the same can in both. `survey.png` also shows, in red with the reason, every YOLO box that didn't become an item (`observations_from_boxes(..., rejected)`: nothing above the table, too few depth points, outside the unsorted zone, too big). It also shows the unsorted zone in magenta. `scan.png` shows cans seen only there in orange, as `scan-N`.
+     A `--dry-run` doesn't move to `scan`, so its two pictures show the same view.
      This is `run_sort(..., pictures=<folder>)`. With `pictures`, nothing goes to `data/orders/`, `data/debug/` or `data/frames/`.
      Without it (`recycle_sorter.cli`, `scripts/`), `run_sort` still keeps every look for debugging: raw frames in `data/frames/`, and overlays, links and pile layouts in `data/debug/`.
-  - The robot connects once per session. Ctrl-C stops the arm, the same way the CLI does.
+  - The robot connects once per session, in the background: `command>` shows at once, and a command waits for the connection only when it has something to fetch. Parsing doesn't wait. Ctrl-C stops the arm, the same way the CLI does.
+  - Nothing prints into the prompt on its own:
+    - The model warm-up runs silently in a daemon thread, so quitting never waits for it.
+    - `pipeline.py` sets `VIAM_LOG_LEVEL=WARNING`, which `recycle_sorter/io/robot.py: connect()` passes to the SDK. The SDK resets its log level on every connect, so setting it anywhere else doesn't work.
 - Run it:
   - `python pipeline.py` prompts for commands, and **the arm moves**.
   - Use `--step` on first runs to press Enter before every motion.
@@ -104,7 +109,7 @@ It runs entirely on this laptop through Ollama, so it needs no API key.
 - **Categories are shared.** They live only in `llm/categories.py`, and both models read them from there:
   - `CATEGORIES`: each category has an `order` description (for the parser) and a `visual` description (for the VLM).
   - `BRAND_KEYWORDS`: ordered, first match wins, whole words only.
-  - The current categories are `coke`, `diet_coke`, `water`, `sparkling_water`, `energy_drink`, `coconut_water`, `ginger_ale`, `non_listed_drinks`, and `not_supported`.
+  - The current categories are `coke`, `diet_coke`, `water` (still and sparkling), `energy_drink`, `coconut_water`, `ginger_ale`, `non_listed_drinks`, and `not_supported`.
   - To add a product, edit only this file.
 - Small models are wrong more often about labels than about words. So after the model answers, a brand keyword in the request text, or in the VLM's `visible_text`, overrides the model's label.
   - The plain "Coca-Cola" logo does not override a `diet_coke` answer.

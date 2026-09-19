@@ -106,7 +106,9 @@ gripper:
   # 2026-09-18 evening, survey back at cans_view: with 30 the fingers came down a few mm too low and the can
   # slipped as it lifted -> 25. (tcp_offset stays 70: it is hardware-proven, and the blind static cycle
   # depends on it.) If the grip now lands on the tapered shoulder, go back toward 28-30.
-  finger_depth: 25
+  # 2026-09-19: cans are now full (heavier) and 25 grabbed too high -> 33, on the straight wall. Keep it
+  # under ~37, where the gripper's palm reaches the lid.
+  finger_depth: 33
   yaw_offset_deg: 0    # calibrate with scripts/02_hover_test.py
   # Added to every grasp point (mm, arm frame: +x = away from the arm, +y = toward the power strip side).
   # If the hover test leaves the gripper N mm short of the can, that is +N in x; N mm toward -y of it, +N in y.

@@ -2,9 +2,9 @@
 
     $ python pipeline.py
     command> 2 cokes and a sparkling water
-    order: {"coke": 2, "sparkling_water": 1}
+    order: {"coke": 2, "water": 1}
     ... survey, YOLO boxes, local VLM labels, pick + place ...
-    fetched: {"coke": 2, "sparkling_water": 1}
+    fetched: {"coke": 2, "water": 1}
 
 Per command:
   1. llm/parse_order.py   text -> {category: count} (qwen2.5:1.5b)
@@ -33,7 +33,9 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
+import threading
 from collections import Counter
 from datetime import datetime
 
@@ -59,13 +61,15 @@ def _log_to_console() -> None:
     ours.propagate = False
 
 
-async def handle(command: str, robot: LiveRobot, args) -> None:
+async def handle(command: str, get_robot, args) -> None:
+    """Parse first; wait for the robot connection only when there is something to fetch."""
     order = await asyncio.to_thread(parse_order, command)  # blocking HTTP call to Ollama
     print(f"order: {json.dumps(order.items)}"
           + (f"  (not available: {order.not_supported})" if order.not_supported else ""))
     if not order.items:
         print("nothing to fetch")
         return
+    robot = await get_robot()
     try:
         fetched = await run_sort(robot, args.mode, args.max_picks, look="once" if args.dry_run else args.look,
                                  wanted=dict(order.items), pictures=args.pictures)
@@ -105,13 +109,38 @@ async def main() -> None:
     # One task, vision model first: loading the 7B model second makes Ollama unload the order model.
     # Silent: anything printed here would land in the middle of the `command>` prompt. If Ollama is
     # down, the first command reports it anyway.
-    warming = asyncio.create_task(asyncio.to_thread(warm_all, lambda msg: None))
-    warming.add_done_callback(lambda t: t.exception())  # retrieve the error so asyncio doesn't print it
+    # A daemon thread, not asyncio.to_thread: quitting must not wait for a ~55 s model load. Ollama
+    # finishes loading it anyway, so it is still warm next time.
+    def warm_quietly() -> None:
+        try:
+            warm_all(lambda msg: None)
+        except Exception:
+            pass
 
-    robot = await LiveRobot.create(dry_run=args.dry_run, step=args.step)
+    threading.Thread(target=warm_quietly, name="model-warm-up", daemon=True).start()
+
+    # Connect to the robot in the background too (3-9 s through the Viam cloud), so the prompt shows
+    # at once; the first command waits for the connection only if it is not done yet. Viam's INFO
+    # lines ("Connecting to socket ...") would land in the prompt, so only its warnings get through.
+    os.environ.setdefault("VIAM_LOG_LEVEL", "WARNING")  # read by connect.py; the SDK resets its level on connect
+    connecting = asyncio.create_task(LiveRobot.create(dry_run=args.dry_run, step=args.step))
+    robot = None
+
+    async def get_robot() -> LiveRobot:
+        nonlocal robot
+        if robot is None:
+            try:
+                robot = await connecting
+            except Exception as e:
+                raise SystemExit(f"could not connect to the robot: {e}") from e
+        return robot
+
+    async def run(command: str) -> None:
+        await handle(command, get_robot, args)
+
     try:
         if args.command:
-            await handle(" ".join(args.command), robot, args)
+            await run(" ".join(args.command))
             return
         print("Type a command (e.g. '2 cokes and a sparkling water'); empty line or 'quit' to exit.")
         while True:
@@ -121,13 +150,19 @@ async def main() -> None:
                 break
             if not command or command.lower() in ("quit", "exit", "q"):
                 break
-            await handle(command, robot, args)
+            await run(command)
     except (KeyboardInterrupt, asyncio.CancelledError):
-        await robot.manip.stop()  # Ctrl-C mid-pick: stop the arm before anything else
-        await robot.machine.stop_all()
+        if robot is not None:
+            await robot.manip.stop()  # Ctrl-C mid-pick: stop the arm before anything else
+            await robot.machine.stop_all()
         raise
     finally:
-        await robot.close()
+        if robot is None and not connecting.done():
+            connecting.cancel()  # quit before it connected
+        elif robot is None and not connecting.cancelled() and connecting.exception() is None:
+            robot = connecting.result()  # connected, but no command was run
+        if robot is not None:
+            await robot.close()
 
 
 if __name__ == "__main__":
