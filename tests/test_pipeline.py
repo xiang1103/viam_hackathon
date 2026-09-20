@@ -91,3 +91,20 @@ async def test_every_item_of_an_order_is_fetched_from_one_look(table, monkeypatc
 
     assert len(robot.placed) == sum(order.items.values())
     assert robot.pictures == 2
+
+
+async def test_an_ordered_can_set_down_on_the_reject_spot_still_counts_as_fetched(table, monkeypatch, capsys):
+    """With no room for one more pile the can goes to the reject spot. It was fetched all the same: on
+    2026-09-19 such a ginger ale came back as {"reject": 1} and "missing"."""
+    robot, args, get_robot = table
+    # Room for exactly two slots: the reject spot and one ordered class. The second class has to share reject.
+    robot.manip.workspace["sorted_areas"] = {"tiny": {"x": [480, 675], "y": [-45, 45]}}  # 81 mm slots, 30 mm between piles
+    robot.manip.workspace["unsorted_zone"] = {"x": [250, 470], "y": [-110, 110]}
+    monkeypatch.setattr(pipeline, "parse_order", lambda text: Order(items={"coke": 1, "water": 1}))
+
+    await pipeline.handle("a coke and a water", get_robot, args)
+
+    assert len(robot.placed) == 2
+    out = capsys.readouterr().out
+    assert 'fetched: {' in out and '"coke": 1' in out and '"water": 1' in out
+    assert "reject" not in out and "missing" not in out

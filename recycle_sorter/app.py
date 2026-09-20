@@ -43,9 +43,10 @@ def make_classifier(mode: str, sort_cfg: dict[str, Any]) -> Classifier:
             raise SystemExit("mode %r reads labels with Claude: put ANTHROPIC_API_KEY=... in .env first." % mode)
         return ClaudeBrandClassifier(sort_cfg["modes"][mode])
     if kind == "local_vlm":
-        from .classify.label_vlm import LocalLabelClassifier
+        from .classify.label_vlm import SESSION_MEMORY, LocalLabelClassifier
 
-        return LocalLabelClassifier(sort_cfg["modes"][mode])
+        # The session's memory: a classifier is built for every order, what it read must outlive it.
+        return LocalLabelClassifier(sort_cfg["modes"][mode], memory=SESSION_MEMORY)
     if mode == "color":
         hsv = HSVColorClassifier(sort_cfg["colors"])
         if load_yaml("machine.yaml").get("perception") == "yolo":
@@ -242,6 +243,8 @@ async def run_sort(
             if pictures is not None:  # still show what YOLO found and why none of it became an item
                 save_survey_picture(frame, [], [], getattr(robot, "last_rejected", []), "survey", workspace, pictures)
             return []
+        if hasattr(classifier, "wanted"):  # an order: the reader may stop once sure reads cover what is left of it
+            classifier.wanted = {k: n for k, n in remaining.items() if n > 0} if wanted is not None else None
         if needs_scan and objects:
             # Second look, from eye level: WHERE things are came from above, WHAT they are is on
             # their side. Items hidden behind others come back deferred, to be read on a later look.
@@ -290,7 +293,7 @@ async def run_sort(
                 demand = {k: (min(n, wanted[k]), size) for k, (n, size) in demand.items() if k in wanted}
             nothing = "nothing in the unsorted zone" if wanted is None else "none of the order is on the table"
             log.info("%s: %s", "assessment" if wanted is None else "to fetch", {k: n for k, (n, _) in demand.items()} or nothing)
-            layout.plan(demand)
+            layout.plan(demand, spare=0 if wanted is not None else None)  # an order knows its counts: no spare slots
             if pictures is None:
                 log.info("plan: %s", save_layout(workspace, layout, objects, results, "layout-plan"))
             planned = True
@@ -375,7 +378,12 @@ async def run_sort(
             continue
 
         failures = 0
-        sorted_counts[key] += 1
+        ordered = policy.pile_key(result)
+        if wanted is not None and key != ordered:
+            # next_slot found no room for this class's own pile and used the reject spot. It was still
+            # fetched: count it as what it is, or the order reports it missing and a "reject" fetched.
+            log.warning("the %s was fetched but set down on the %s spot: no room for a pile of its own", ordered, key)
+        sorted_counts[ordered if wanted is not None else key] += 1
         expected = max((expected or 1) - 1, 0)
         if wanted is not None:
             remaining[policy.pile_key(result)] -= 1
