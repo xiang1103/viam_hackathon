@@ -1,0 +1,14 @@
+[
+  {
+    "time": "15:30:39",
+    "command": "Can I get a red bull",
+    "order": {
+      "energy_drink": 1
+    },
+    "not_available": [],
+    "fetched": {
+      "energy_drink": 1
+    },
+    "missing": {}
+  }
+]

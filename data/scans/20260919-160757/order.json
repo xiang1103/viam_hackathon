@@ -1,0 +1,28 @@
+[
+  {
+    "time": "16:09:24",
+    "command": "Can I have one diet coke and one ginger ale",
+    "order": {
+      "diet_coke": 1,
+      "ginger_ale": 1
+    },
+    "not_available": [],
+    "fetched": {
+      "diet_coke": 1,
+      "ginger_ale": 1
+    },
+    "missing": {}
+  },
+  {
+    "time": "16:10:27",
+    "command": "Can I have an energy drink",
+    "order": {
+      "energy_drink": 1
+    },
+    "not_available": [],
+    "fetched": {
+      "energy_drink": 1
+    },
+    "missing": {}
+  }
+]

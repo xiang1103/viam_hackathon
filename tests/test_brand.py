@@ -364,6 +364,32 @@ async def test_every_box_in_either_picture_is_read_and_linked(workspace):
     assert [link["can"] for link in clf.last_links] == [0, 1, "scan-0"]
 
 
+async def test_labels_saved_by_demo_capture_are_used_without_the_vlm(workspace):
+    """demo_pipeline.py: a can within same_spot_mm of a saved label keeps it with no VLM read, a can
+    that is not in the file is read as usual, and scan-only boxes are skipped."""
+    from recycle_sorter.classify.label_vlm import LocalLabelClassifier
+    from recycle_sorter.perception.yolo import Box
+
+    calls = []
+
+    def read(images, view_names=None):
+        calls.append(images)
+        return SimpleNamespace(label="water", confidence="high", visible_text="", closest_reference="water")
+
+    saved, moved = seen_in_survey(350, 0, (100, 100, 90, 130)), seen_in_survey(400, 150, (300, 100, 90, 130))
+    for o in (saved, moved):
+        o.crop = np.full((130, 90, 3), 120, np.uint8)
+    clf = LocalLabelClassifier({"view": "scan"}, read=read, detect=lambda image: [Box(1100, 50, 1180, 200, "can", 0.7)])
+    clf._known = [(np.array([385.0, 0.0]), Classification("coke", 0.9, {"visible_text": "Coca-Cola"}))]
+    clf.same_spot_mm, clf.read_scan_only = 40.0, False
+
+    frame = survey_frame()
+    results = await clf.classify_scan([saved, moved], frame, frame, workspace)
+
+    assert [r.label for r in results] == ["coke", "water"] and results[0].meta["remembered"]
+    assert len(calls) == 1 and clf.last_scan_only == []  # only the can that is not in the file
+
+
 def test_label_mode_reads_from_the_scan_pose_unless_cam_pos():
     from recycle_sorter.app import make_classifier
 

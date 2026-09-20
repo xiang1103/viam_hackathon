@@ -1,0 +1,16 @@
+[
+  {
+    "time": "15:26:26",
+    "command": "Can I get two coke",
+    "order": {
+      "coke": 2
+    },
+    "not_available": [],
+    "fetched": {
+      "coke": 1
+    },
+    "missing": {
+      "coke": 1
+    }
+  }
+]

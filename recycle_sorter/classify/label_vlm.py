@@ -55,6 +55,8 @@ class LocalLabelClassifier:
         self.last_scan_only: list[Classification] = []  # scan view: cans YOLO found only in the scan picture
         self.last_links: list[dict] = []  # scan view: which survey box and scan box each read came from
         self._known: list[tuple[np.ndarray, Classification]] = []  # scan view: what each spot held last look
+        self.same_spot_mm = SAME_SPOT_MM  # demo_pipeline.py loosens it when _known is seeded from a saved look
+        self.read_scan_only = True  # read cans seen only in the scan picture (never picked); demo_pipeline.py skips them
 
     @property
     def needs_scan(self) -> bool:
@@ -165,7 +167,7 @@ class LocalLabelClassifier:
                 "scan_box": list(v.box) if v.readable else None,
                 "scan_yolo_index": box_of[i] if box_of[i] >= 0 else None,
             }
-            before = next((r for c, r in self._known if np.linalg.norm(c - o.centroid) < SAME_SPOT_MM), None)
+            before = next((r for c, r in self._known if np.linalg.norm(c - o.centroid) < self.same_spot_mm), None)
             top = self._crop(o, survey) if o.crop is not None and o.crop.size else None
             if before is not None:
                 link["views"], r = before.meta.get("link", {}).get("views", []), before
@@ -192,6 +194,8 @@ class LocalLabelClassifier:
         # Cans YOLO found only in the scan picture: read too, but they have no position to pick from.
         linked_boxes = {j for j in box_of if j >= 0}
         self.last_scan_only = []
+        if not self.read_scan_only:
+            linked_boxes = set(range(len(boxes)))
         for n, (j, b) in enumerate((j, b) for j, b in enumerate(boxes) if j not in linked_boxes):
             r = await self._read(self._box_crop(scan.color, b))
             r.meta["link"] = {"can": f"scan-{n}", "survey_box": None,

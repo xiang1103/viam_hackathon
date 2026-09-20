@@ -1,0 +1,121 @@
+{
+  "time": "2026-09-19T15:29:13",
+  "cans": [
+    {
+      "x": 400.66656494140625,
+      "y": -300.2237548828125,
+      "label": "ginger_ale",
+      "confidence": 0.9,
+      "meta": {
+        "visible_text": "CANADA DRY\nSINCE 1904\nZERO SUGAR\nGINGER ALE",
+        "reference": "canada_dry/ginger_ale",
+        "link": {
+          "can": 0,
+          "survey_box": [
+            640,
+            405,
+            105,
+            100
+          ],
+          "scan_box": [
+            670,
+            200,
+            162,
+            269
+          ],
+          "scan_yolo_index": 2,
+          "views": [
+            "scan"
+          ]
+        }
+      }
+    },
+    {
+      "x": 356.85418701171875,
+      "y": -228.87332153320312,
+      "label": "energy_drink",
+      "confidence": 0.9,
+      "meta": {
+        "visible_text": "Bull",
+        "reference": "energy_drink",
+        "link": {
+          "can": 1,
+          "survey_box": [
+            711,
+            509,
+            85,
+            108
+          ],
+          "scan_box": [
+            481,
+            249,
+            151,
+            289
+          ],
+          "scan_yolo_index": 3,
+          "views": [
+            "scan"
+          ]
+        }
+      }
+    },
+    {
+      "x": 469.62408447265625,
+      "y": -177.9653778076172,
+      "label": "coke",
+      "confidence": 0.9,
+      "meta": {
+        "visible_text": "Cola",
+        "reference": "coke",
+        "link": {
+          "can": 2,
+          "survey_box": [
+            538,
+            567,
+            116,
+            124
+          ],
+          "scan_box": [
+            403,
+            83,
+            156,
+            255
+          ],
+          "scan_yolo_index": 1,
+          "views": [
+            "scan"
+          ]
+        }
+      }
+    },
+    {
+      "x": 487.17724609375,
+      "y": -353.267333984375,
+      "label": "diet_coke",
+      "confidence": 0.9,
+      "meta": {
+        "visible_text": "Diet Coke",
+        "reference": "diet_coke",
+        "link": {
+          "can": 3,
+          "survey_box": [
+            521,
+            325,
+            104,
+            96
+          ],
+          "scan_box": [
+            800,
+            82,
+            156,
+            259
+          ],
+          "scan_yolo_index": 0,
+          "views": [
+            "scan"
+          ]
+        }
+      }
+    }
+  ]
+}

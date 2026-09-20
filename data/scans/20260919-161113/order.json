@@ -1,0 +1,14 @@
+[
+  {
+    "time": "16:12:10",
+    "command": "can i have a soda genral",
+    "order": {
+      "non_listed_drinks": 1
+    },
+    "not_available": [],
+    "fetched": {},
+    "missing": {
+      "non_listed_drinks": 1
+    }
+  }
+]
