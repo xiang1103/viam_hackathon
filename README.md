@@ -1,5 +1,19 @@
 # viam_hackathon — Recycle Sorter
 
+<p align="center">
+  <video src="docs/media/demo.mp4" poster="docs/media/demo-poster.jpg" controls muted playsinline width="360">
+    <a href="docs/media/demo.mp4"><img src="docs/media/demo-poster.jpg" alt="Demo: the arm fetching an order of cans" width="360"></a>
+  </video>
+  <br>
+  <sub>The arm fetching an order (click to play)</sub>
+</p>
+
+<p align="center">
+  <img src="docs/media/scan.png" alt="Scan picture: each can boxed by YOLO and labelled by the local vision model" width="720">
+  <br>
+  <sub>Scan view: YOLO finds each can, the local vision model reads its label</sub>
+</p>
+
 A Viam arm with a wrist RealSense picks items out of one unsorted pile and places them into
 sorted piles. One pick-and-place loop; only the **classifier** changes per stage:
 
