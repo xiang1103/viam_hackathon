@@ -1,12 +1,8 @@
 # viam_hackathon — Recycle Sorter
 
-<p align="center">
-  <video src="docs/media/demo.mp4" poster="docs/media/demo-poster.jpg" controls muted playsinline width="360">
-    <a href="docs/media/demo.mp4"><img src="docs/media/demo-poster.jpg" alt="Demo: the arm fetching an order of cans" width="360">https://github.com/user-attachments/assets/e749919e-a6bd-4967-83af-0f36aa2353dc</a>
-  </video>
-  <br>
-  <sub>The arm fetching an order (click to play)</sub>
-</p>
+https://github.com/user-attachments/assets/e749919e-a6bd-4967-83af-0f36aa2353dc
+
+<p align="center"><sub>The arm fetching an order</sub></p>
 
 <p align="center">
   <img src="docs/media/scan.png" alt="Scan picture: each can boxed by YOLO and labelled by the local vision model" width="720">
